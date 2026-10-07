@@ -1,0 +1,96 @@
+"""Head-point annotation formats, all loaded as (N, 2) float arrays of (x, y) pixels.
+
+* ShanghaiTech - GT_IMG_<n>.mat holding image_info{1}.location
+* UCF-QNRF     - img_<n>_ann.mat holding annPoints
+* CVAT         - "CVAT for images 1.1" XML export with Points shapes
+* Ours         - one JSON per frame, written by tools/annotate_points.py and
+                 tools/cvat_to_points.py: annotations/<video>/<frame>.json
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+
+import numpy as np
+from scipy.io import loadmat
+
+
+def load_shanghaitech_mat(path: str | Path) -> np.ndarray:
+    record = loadmat(str(path))["image_info"][0, 0][0, 0]
+    names = record.dtype.names or ()
+    location = record["location"] if "location" in names else record[0]
+    return np.asarray(location, np.float64).reshape(-1, 2)
+
+
+def load_qnrf_mat(path: str | Path) -> np.ndarray:
+    return np.asarray(loadmat(str(path))["annPoints"], np.float64).reshape(-1, 2)
+
+
+@dataclass
+class PointAnnotation:
+    image: str  # frame file name, e.g. frame_0001.jpg
+    video: str  # source video id = folder name under frames/
+    width: int
+    height: int
+    points: np.ndarray  # (N, 2) x, y in pixels
+
+
+def save_points_json(path: str | Path, ann: PointAnnotation) -> None:
+    """Write atomically, so a crash mid-save never leaves a half-written file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "image": ann.image,
+        "video": ann.video,
+        "width": ann.width,
+        "height": ann.height,
+        "count": int(len(ann.points)),
+        "points": [[round(float(x), 2), round(float(y), 2)] for x, y in np.asarray(ann.points).reshape(-1, 2)],
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def load_points_json(path: str | Path) -> PointAnnotation:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return PointAnnotation(
+        image=data["image"],
+        video=data.get("video", Path(path).parent.name),
+        width=int(data["width"]),
+        height=int(data["height"]),
+        points=np.asarray(data["points"], np.float64).reshape(-1, 2),
+    )
+
+
+def parse_cvat_xml(path: str | Path, label: str | None = None) -> list[PointAnnotation]:
+    """Points shapes from a CVAT "CVAT for images 1.1" export (optionally one label only)."""
+    root = ET.parse(str(path)).getroot()
+    images = root.findall("image")
+    if not images and root.find("track") is not None:
+        raise ValueError("this is a 'CVAT for video' export; export the task as 'CVAT for images 1.1'")
+    result = []
+    for image in images:
+        points = []
+        for shape in image.findall("points"):
+            if label is not None and shape.get("label") != label:
+                continue
+            for pair in shape.get("points", "").split(";"):
+                if pair.strip():
+                    x, y = pair.split(",")
+                    points.append((float(x), float(y)))
+        name = PurePosixPath(image.get("name", "").replace("\\", "/"))
+        result.append(
+            PointAnnotation(
+                image=name.name,
+                video=name.parent.name,
+                width=int(image.get("width")),
+                height=int(image.get("height")),
+                points=np.asarray(points, np.float64).reshape(-1, 2),
+            )
+        )
+    return result

@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "One entry per camera view. id: also its node in the exit graph (app/exit_router.py) unless graph_node is set.",
+    "source: rtsp:// URL or a video file path relative to the repo root. rtsp://localhost:8554/<name> is the clip",
+    "  data/india_dataset/raw_videos/<name>.mp4 replayed by MediaMTX (or read directly with FRAME_SOURCE=local).",
+    "roi: walkable-area polygon in camera pixels [[x, y], ...]; null = whole frame.",
+    "Persons/m2 needs either area_m2 (rough ground area of the ROI) or calibration:",
+    "  {\"image_points\": [[x, y] x4+], \"ground_points\": [[X_m, Y_m] x4+]} from measured floor markers (plan 4.5).",
+    "The clip names and area_m2 values below are placeholders until the clips are chosen and measured."
+  ],
+  "zones": [
+    {
+      "id": "RAMKUND_NORTH",
+      "name": "Ramkund north steps",
+      "source": "rtsp://localhost:8554/pandharpur_01",
+      "roi": null,
+      "area_m2": 150.0,
+      "calibration": null
+    },
+    {
+      "id": "RAMKUND_SOUTH",
+      "name": "Ramkund south steps",
+      "source": "rtsp://localhost:8554/pandharpur_02",
+      "roi": null,
+      "area_m2": 150.0,
+      "calibration": null
+    },
+    {
+      "id": "GHAT_1",
+      "name": "Ghat 1 approach",
+      "source": "rtsp://localhost:8554/shirdi_01",
+      "roi": null,
+      "area_m2": 200.0,
+      "calibration": null
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# MediaMTX: replays recorded clips as RTSP "cameras" for the demo (plan §10.6).
+#
+# Every file data/india_dataset/raw_videos/<name>.mp4 is served at
+#     rtsp://localhost:8554/<name>
+# MediaMTX's `source:` setting only takes stream URLs, not files, so when a reader connects
+# MediaMTX starts ffmpeg (included in the -ffmpeg image) to publish the file in a loop.
+# `-c copy` does not re-encode, so clips must be H.264 (see the yt-dlp command in README).
+#
+# Without Docker: download mediamtx.exe, install FFmpeg (winget install Gyan.FFmpeg) and
+# replace /videos below with the full path of data\india_dataset\raw_videos. Or publish a
+# clip by hand to a fixed path:
+#     ffmpeg -re -stream_loop -1 -i data\india_dataset\raw_videos\pandharpur_01.mp4 -c copy -f rtsp rtsp://localhost:8554/pandharpur_01
+
+paths:
+  "~^([A-Za-z0-9_-]+)$":
+    runOnDemand: ffmpeg -re -stream_loop -1 -i /videos/$G1.mp4 -an -c copy -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnDemandRestart: yes

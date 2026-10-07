@@ -1,0 +1,33 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets
+.env
+
+# Datasets, videos and generated files (large; keep out of git)
+data/**
+!data/README.md
+!data/india_dataset/
+!data/india_dataset/sources.csv
+outputs/
+results/
+
+# Model weights
+*.pth
+*.pth.tar
+*.pt
+!backend/ml/weights/.gitkeep
+
+# Node / frontend (Phase 4)
+node_modules/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,5 @@
+# Run commands from this backend/ folder, e.g. `python -m pytest` or `python -m ml.train_csrnet`.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
