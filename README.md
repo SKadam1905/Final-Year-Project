@@ -670,3 +670,5 @@ On 2026-10-09 this moved the demo model's 17,737 readings (all counting 700.05 p
 5. G. Farnebäck, "Two-Frame Motion Estimation Based on Polynomial Expansion," *SCIA*, 2003.
 6. J. J. Fruin, *Pedestrian Planning and Design*, 1971.
 7. The Digital Personal Data Protection Act, 2023 (India).
+#   F i n a l - Y e a r - P r o j e c t  
+ 
