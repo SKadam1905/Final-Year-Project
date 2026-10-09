@@ -91,7 +91,7 @@ export function useLiveZones() {
 
   const loadHistory = useCallback(async (zoneId) => {
     try {
-      const body = await api.history(zoneId);
+      const body = await api.history(zoneId, 300); // 10 minutes at one reading every 2 s
       dispatch({ type: "history", zoneId, readings: body.readings });
     } catch {
       // The chart still fills from live updates.

@@ -6,6 +6,8 @@ import GhatMap from "./GhatMap.jsx";
 import KpiStrip from "./KpiStrip.jsx";
 import { computeKpis } from "./kpi.js";
 import ZoneList from "./ZoneList.jsx";
+import LiveMonitor from "./LiveMonitor.jsx";
+import { CameraStatus, CrowdEstimation, SafestExit } from "./Panels.jsx";
 import ZoneSummary from "./ZoneSummary.jsx";
 
 /** Why the screen may be incomplete: backend down, socket disconnected, no model. Never silent. */
@@ -34,11 +36,16 @@ function Notices({ backend, connection, lastUpdate }) {
 
 /** The Command Centre: live KPIs, the zones, and the selected zone's details. */
 export default function CommandCentre({ live, selectedId, onSelect }) {
-  const { state, now, connection, backend } = live;
+  const { state, now, connection, backend, loadHistory } = live;
   const connected = connection === "live";
   const zones = sortZones(Object.values(state.zones), now, connected);
   const kpis = computeKpis({ zones, alerts: state.alerts, health: backend.health, now, connected });
   const [firstPick, setFirstPick] = useState(true);
+  const selected = state.zones[selectedId];
+
+  useEffect(() => {
+    if (selectedId) loadHistory(selectedId); // the last 10 minutes for the trend chart
+  }, [selectedId, loadHistory]);
 
   useEffect(() => {
     // Start on the highest-risk zone once the first data arrives; afterwards the user decides.
@@ -59,8 +66,13 @@ export default function CommandCentre({ live, selectedId, onSelect }) {
               selectedId={selectedId} onSelect={onSelect} />
             <ZoneList zones={zones} now={now} connected={connected} selectedId={selectedId} onSelect={onSelect} />
           </div>
-          <aside aria-label="Selected zone" className="min-w-0 space-y-3">
-            <ZoneSummary zone={state.zones[selectedId]} now={now} connected={connected} />
+          <aside aria-label="Selected zone"
+            className="min-w-0 space-y-3 lg:sticky lg:top-[4.5rem] lg:max-h-[calc(100vh-5rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
+            <ZoneSummary zone={selected} now={now} connected={connected} />
+            <LiveMonitor key={selectedId} zone={selected} densityScale={backend.config?.density_scale} />
+            <CrowdEstimation zone={selected} now={now} connected={connected} thresholds={backend.config?.thresholds} />
+            <SafestExit zone={selected} now={now} connected={connected} />
+            <CameraStatus zone={selected} zones={zones} health={backend.health} />
           </aside>
         </main>
       </div>

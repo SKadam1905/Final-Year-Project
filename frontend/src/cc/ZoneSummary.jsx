@@ -1,4 +1,4 @@
-import { countMethodLabel, formatCount, formatNumber, hotspotText } from "../format.js";
+import { formatCount, formatNumber } from "../format.js";
 import { displayLevel, turbulenceLabel, zoneState } from "../risk.js";
 import { levelUi } from "./theme.js";
 
@@ -11,7 +11,7 @@ function Figure({ label, value, unit }) {
   );
 }
 
-/** The selected zone at a glance: level (word + icon + colour), the four live figures, method, hotspot. */
+/** The selected zone at a glance: level (word + icon + colour) and the four live figures. */
 export default function ZoneSummary({ zone, now, connected }) {
   if (!zone) {
     return <section className="rounded-xl bg-navy-800 p-4 text-sm text-slate-400">Select a zone to see its details.</section>;
@@ -44,11 +44,6 @@ export default function ZoneSummary({ zone, now, connected }) {
             <Figure label="Turbulence" value={formatNumber(r.turbulence)} unit={turbulenceLabel(r.turbulence)} />
             <Figure label="Crowd pressure" value={formatNumber(r.pressure)} unit="30 s mean" />
           </dl>
-          <p className="mt-2 text-sm text-slate-300">
-            Counted by <span className="font-semibold text-white">{countMethodLabel(r.count_method)}</span>
-            {r.count_method === "density" && r.detection_count != null && ` (YOLO found ${formatCount(r.detection_count)})`}
-          </p>
-          {r.hotspot && <p className="text-sm text-slate-300"><span className="font-semibold text-saffron">Hotspot:</span> {hotspotText(r.hotspot)}</p>}
         </>
       ) : (
         <p className="mt-3 text-sm font-medium text-slate-300">

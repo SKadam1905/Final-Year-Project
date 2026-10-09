@@ -1,7 +1,7 @@
 // Pure state transitions for the dashboard (used by useLiveZones through useReducer).
 // Zones are keyed by their backend id; a zone looks like
 //   { id, name, kind: "camera" | "video", reading: <last density_update payload> | null, lastSeen: ms | null,
-//     history: [{ t, pressure }] }
+//     history: [{ t, pressure, count, density }] }
 // "video" zones are uploaded test videos looping as cameras; they can be removed at runtime.
 // Alerts are the backend's alert events (same shape over REST and Socket.IO), newest first.
 
@@ -52,7 +52,7 @@ export function applyDensityUpdate(state, payload, now) {
     ...zone,
     reading: payload,
     lastSeen: seenAt(payload, now),
-    history: mergeHistory(zone.history, [{ t: payload.timestamp, pressure: payload.pressure }]),
+    history: mergeHistory(zone.history, [{ t: payload.timestamp, pressure: payload.pressure, count: payload.count, density: payload.density }]),
   };
   return { ...state, lastUpdate: now, zones: { ...state.zones, [payload.zone_id]: updated } };
 }
@@ -61,7 +61,7 @@ export function applyDensityUpdate(state, payload, now) {
 export function setHistory(state, zoneId, readings) {
   const zone = state.zones[zoneId];
   if (!zone) return state;
-  const points = readings.map((r) => ({ t: r.timestamp, pressure: r.pressure }));
+  const points = readings.map((r) => ({ t: r.timestamp, pressure: r.pressure, count: r.count, density: r.density }));
   return { ...state, zones: { ...state.zones, [zoneId]: { ...zone, history: mergeHistory(zone.history, points) } } };
 }
 
