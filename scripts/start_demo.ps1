@@ -38,6 +38,21 @@ if (-not (Test-Path (Join-Path $root "frontend\node_modules"))) { Fail "Run 'npm
 $clips = Get-ChildItem (Join-Path $root "data\india_dataset\raw_videos") -Include *.mp4, *.avi, *.mov, *.mkv -Recurse -ErrorAction SilentlyContinue
 if (-not $clips) { Write-Warning "No clips in data\india_dataset\raw_videos: the camera zones will show 'No signal'." }
 
+# taskkill through cmd: a process that is already gone (e.g. a PID file left from before a reboot) is not
+# an error. Called directly, PowerShell 5.1 turns taskkill's message into an error that stops the script.
+function Stop-Tree([string]$id) {
+    & cmd /c "taskkill /PID $id /T /F >nul 2>&1"
+    return $LASTEXITCODE -eq 0
+}
+
+# A PID in the file is only ours if its command line says so: after a reboot Windows may have given
+# that number to another program, which must not be killed.
+function Test-Ours([string]$id) {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
+    return $proc -and ($proc.CommandLine -match 'uvicorn.*app\.main:app' -or $proc.CommandLine -match 'npm.*run.*dev' -or
+                       $proc.CommandLine -like "*nashik-kumbh-stampede-predictor*vite*")
+}
+
 function Listener([int]$port) {
     Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 }
@@ -78,7 +93,7 @@ function Setting([string[]]$names, [string]$default = "") {
 
 # Free the ports: our own previous run first, then ask about anything else.
 if (Test-Path $pidFile) {
-    foreach ($id in Get-Content $pidFile) { & taskkill /PID $id /T /F 2>$null | Out-Null }
+    foreach ($id in Get-Content $pidFile) { if (Test-Ours $id) { Stop-Tree $id | Out-Null } }
     Remove-Item $pidFile
     Start-Sleep -Seconds 2
 }
@@ -94,7 +109,7 @@ function Free-Port([int]$port, [string]$what) {
     if (-not $stop) {
         Fail "Port $port ($what) is in use by $who. Stop it with:`n    $command`nor start this script with -Force to stop it."
     }
-    & taskkill /PID $proc.ProcessId /T /F 2>$null | Out-Null
+    Stop-Tree $proc.ProcessId | Out-Null
     Start-Sleep -Seconds 2
     if (Listener $port) { Fail "Could not free port $port; stop $who yourself:`n    $command" }
     Write-Host "Stopped $who, which held port $port."
@@ -136,6 +151,15 @@ if ($channels -match "telegram|all") {
     }
 }
 $mongoWanted = [bool](Setting "MONGODB_URI", "MONGO_URI", "MONGODB_URL")
+$usersFile = Join-Path $root (Setting "USERS_CONFIG" "config/users.json")
+$accounts = @()
+if (Test-Path $usersFile) { $accounts = @((Get-Content $usersFile -Raw | ConvertFrom-Json).users) }
+if (-not $accounts.Count) {
+    Write-Warning "No dashboard accounts yet: create one with  cd backend; ..env\Scripts\python.exe -m tools.create_user admin --role admin --generate"
+}
+if (-not (Setting "SECRET_KEY")) {
+    Write-Warning "SECRET_KEY is not set in .env: everyone is logged out when the backend restarts. tools.create_user adds one."
+}
 
 $started = @()
 $backend = Start-Process -FilePath $python -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "$BackendPort" `
@@ -175,6 +199,7 @@ Write-Host "Frames      : $($health.frame_source), zones $($health.zones -join '
 Write-Host "Storage     : $storage"
 Write-Host "Telegram    : $telegramNote"
 Write-Host ""
-Write-Host "Dashboard   : http://localhost:$FrontendPort" -ForegroundColor Green
+Write-Host "Login       : http://localhost:$FrontendPort   (Command Centre after login; the old dashboard is at #/classic)" -ForegroundColor Green
+Write-Host "Accounts    : $(if ($accounts.Count) { ($accounts | ForEach-Object { "$($_.username) ($($_.role))" }) -join ', ' } else { 'none yet (see the warning above)' })"
 Write-Host "API docs    : http://localhost:$BackendPort/docs"
 Write-Host "Logs        : results\demo_backend.log, results\demo_frontend.log   Stop: scripts\stop_demo.ps1"

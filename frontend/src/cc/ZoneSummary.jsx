@@ -30,7 +30,7 @@ export default function ZoneSummary({ zone, now, connected }) {
         </div>
         <span className={`relative inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-display text-lg font-bold ${ui.chip}`}>
           {(level === "RED" || level === "ORANGE") && (
-            <span aria-hidden="true" className={`absolute inset-0 rounded-lg motion-safe-only ${level === "RED" ? "animate-risk-pulse-fast" : "animate-risk-pulse"}`}
+            <span aria-hidden="true" className={`absolute inset-0 rounded-lg motion-safe-only ${level === "RED" ? "animate-chip-pulse-fast" : "animate-chip-pulse"}`}
               style={{ boxShadow: `0 0 0 3px ${ui.fill}` }} />
           )}
           <span aria-hidden="true">{ui.icon}</span>{ui.word}<span className="text-xs font-semibold opacity-80">{ui.meaning}</span>

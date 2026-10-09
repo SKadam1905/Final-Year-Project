@@ -16,12 +16,15 @@ export default {
       },
       keyframes: {
         "risk-pulse": { "0%": { transform: "scale(1)", opacity: "0.75" }, "100%": { transform: "scale(2.2)", opacity: "0" } },
+        "chip-pulse": { "0%": { transform: "scale(1)", opacity: "0.8" }, "100%": { transform: "scale(1.18, 1.45)", opacity: "0" } },
         "route-dash": { to: { strokeDashoffset: "-24" } },
         "fade-in": { from: { opacity: "0", transform: "translateY(4px)" }, to: { opacity: "1", transform: "none" } },
       },
       animation: {
         "risk-pulse": "risk-pulse 1.6s ease-out infinite",
         "risk-pulse-fast": "risk-pulse 0.9s ease-out infinite",
+        "chip-pulse": "chip-pulse 1.6s ease-out infinite",
+        "chip-pulse-fast": "chip-pulse 0.9s ease-out infinite",
         "route-dash": "route-dash 0.8s linear infinite",
         "fade-in": "fade-in 0.25s ease-out",
       },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../api.js";
 import { formatTime } from "../format.js";
 import { sortZones } from "../risk.js";
@@ -14,6 +14,7 @@ import ZoneSummary from "./ZoneSummary.jsx";
 /** Why the screen may be incomplete: backend down, socket disconnected, no model. Never silent. */
 function Notices({ backend, connection, lastUpdate }) {
   const items = [];
+  if (backend.status === "loading") items.push(["info", "Connecting to the backend and the live feed…"]);
   if (backend.status === "unreachable") {
     items.push(["red", `Cannot reach the backend at ${API_URL}: retrying every 5 s. ${backend.error ?? ""}`]);
   } else if (connection === "disconnected") {
@@ -26,8 +27,9 @@ function Notices({ backend, connection, lastUpdate }) {
   return (
     <div className="space-y-1 px-3 pt-2 sm:px-4">
       {items.map(([tone, text]) => (
-        <p key={text} role="alert" className={`rounded-lg border-l-4 px-3 py-2 text-sm font-medium ${
-          tone === "red" ? "border-risk-red bg-risk-red/15 text-red-100" : "border-risk-orange bg-risk-orange/15 text-orange-100"}`}>
+        <p key={text} role={tone === "info" ? "status" : "alert"} className={`rounded-lg border-l-4 px-3 py-2 text-sm font-medium ${
+          tone === "red" ? "border-risk-red bg-risk-red/15 text-red-100"
+            : tone === "info" ? "border-navy-500 bg-navy-800 text-slate-200" : "border-risk-orange bg-risk-orange/15 text-orange-100"}`}>
           {text}
         </p>
       ))}
@@ -36,7 +38,14 @@ function Notices({ backend, connection, lastUpdate }) {
 }
 
 /** The Command Centre: live KPIs, the zones, and the selected zone's details. */
-export default function CommandCentre({ live, selectedId, onSelect }) {
+export default function CommandCentre({ live, selectedId, onSelect: setSelected }) {
+  // On a phone the details are below the map and the list: bring them into view when a zone is chosen.
+  const onSelect = useCallback((zoneId) => {
+    setSelected(zoneId);
+    if (window.innerWidth < 1024) {
+      requestAnimationFrame(() => document.getElementById("selected-zone-heading")?.scrollIntoView?.({ behavior: "smooth", block: "start" }));
+    }
+  }, [setSelected]);
   const { state, now, connection, backend, loadHistory, acknowledge } = live;
   const connected = connection === "live";
   const zones = sortZones(Object.values(state.zones), now, connected);
@@ -51,10 +60,10 @@ export default function CommandCentre({ live, selectedId, onSelect }) {
   useEffect(() => {
     // Start on the highest-risk zone once the first data arrives; afterwards the user decides.
     if (firstPick && zones.length && zones[0].reading) {
-      if (!selectedId) onSelect(zones[0].id);
+      if (!selectedId) setSelected(zones[0].id);
       setFirstPick(false);
     }
-  }, [firstPick, zones, selectedId, onSelect]);
+  }, [firstPick, zones, selectedId, setSelected]);
 
   return (
     <div className="pb-6">

@@ -30,9 +30,23 @@ describe("api session handling", () => {
     expect(session.get()).toBeNull();
   });
 
+  it("keeps the first reason: later requests without a token do not overwrite 'expired'", async () => {
+    session.set(SESSION);
+    const handler = vi.fn();
+    onUnauthorized(handler);
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Your session has expired: please log in again." }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Not logged in: please log in." }), { status: 401 })));
+    await expect(api.zones()).rejects.toThrow("expired");
+    await expect(api.config()).rejects.toThrow("Not logged in");
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith("Your session has expired: please log in again.");
+  });
+
   it("forgets an expired session and treats a refused socket like a 401", () => {
     session.set({ ...SESSION, expires_at: Date.now() / 1000 - 1 });
     expect(session.get()).toBeNull();
+    session.set(SESSION);
     const handler = vi.fn();
     onUnauthorized(handler);
     expect(socketRefused(new Error("xhr poll error"))).toBe(false); // backend down: just disconnected

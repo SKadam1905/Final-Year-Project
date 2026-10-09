@@ -9,10 +9,24 @@ param([int]$BackendPort = 8000, [int]$FrontendPort = 5173)
 $root = Split-Path -Parent $PSScriptRoot
 $pidFile = Join-Path $root "results\demo.pids"
 $stopped = 0
+
+# taskkill through cmd: a process that is already gone (e.g. a PID file left from before a reboot) is not
+# an error. Called directly, PowerShell 5.1 turns taskkill's message into an error that stops the script.
+function Stop-Tree([string]$id) {
+    & cmd /c "taskkill /PID $id /T /F >nul 2>&1"
+    return $LASTEXITCODE -eq 0
+}
+
+# A PID in the file is only ours if its command line says so: after a reboot Windows may have given
+# that number to another program, which must not be killed.
+function Test-Ours([string]$id) {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
+    return $proc -and ($proc.CommandLine -match 'uvicorn.*app\.main:app' -or $proc.CommandLine -match 'npm.*run.*dev' -or
+                       $proc.CommandLine -like "*nashik-kumbh-stampede-predictor*vite*")
+}
 if (Test-Path $pidFile) {
     foreach ($id in Get-Content $pidFile) {
-        & taskkill /PID $id /T /F 2>$null | Out-Null  # /T: also the python / node child processes
-        if ($LASTEXITCODE -eq 0) { Write-Host "stopped $id"; $stopped++ }
+        if ((Test-Ours $id) -and (Stop-Tree $id)) { Write-Host "stopped $id"; $stopped++ }  # /T: also the python / node children
     }
     Remove-Item $pidFile
     Start-Sleep -Seconds 2
@@ -24,7 +38,7 @@ foreach ($port in $BackendPort, $FrontendPort) {
     $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
     $ours = $proc.CommandLine -match 'uvicorn.*app\.main:app' -or $proc.CommandLine -like "*nashik-kumbh-stampede-predictor*vite*"
     if ($ours) {
-        & taskkill /PID $proc.ProcessId /T /F 2>$null | Out-Null
+        Stop-Tree $proc.ProcessId | Out-Null
         Write-Host "stopped $($proc.Name) (pid $($proc.ProcessId)) on port $port"
         $stopped++
     } else {

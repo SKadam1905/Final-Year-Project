@@ -71,12 +71,17 @@ export function withToken(url) {
   return token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url;
 }
 
+/** Ends the session on a 401. Only the request that ends it reports its reason ("expired", ...):
+ * requests made after that carry no token and would only say "not logged in". */
+function endSession(reason) {
+  const hadSession = session.token() != null;
+  session.clear();
+  if (hadSession) unauthorized(reason);
+}
+
 async function failed(response) {
   const detail = await errorDetail(response);
-  if (response.status === 401) {
-    session.clear();
-    unauthorized(detail);
-  }
+  if (response.status === 401) endSession(detail);
   return new Error(detail);
 }
 
@@ -195,10 +200,7 @@ export function uploadVideo(file, onProgress = () => {}) {
       }
       if (xhr.status >= 200 && xhr.status < 300) resolve(body);
       else {
-        if (xhr.status === 401) {
-          session.clear();
-          unauthorized(body?.detail);
-        }
+        if (xhr.status === 401) endSession(body?.detail);
         reject(new Error(body?.detail ?? `Upload failed (HTTP ${xhr.status})`));
       }
     };
@@ -232,8 +234,7 @@ export const socketOptions = (extra = {}) => ({
 /** A refused socket (no or expired token) logs out like a 401; other errors are just "disconnected". */
 export function socketRefused(error) {
   if (/log in|logged out/i.test(error?.message ?? "")) {
-    session.clear();
-    unauthorized(error.message);
+    endSession(error.message);
     return true;
   }
   return false;

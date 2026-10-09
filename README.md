@@ -118,6 +118,52 @@ uvicorn app.main:app --port 8000          # terminal 2: API + inference (GPU)
 **C. Backend in a container (CPU only):** `docker compose --profile app up -d --build`. The
 camera manager still runs on the host.
 
+## Login, roles and the Command Centre
+
+**Accounts.** The dashboard and every `/api/` route need a login (`/health` stays public).
+Users live in `config/users.json` with PBKDF2-SHA256 password hashes; the file is git-ignored
+and never holds a plain password. Add, change or remove users with:
+
+```powershell
+cd backend
+..\venv\Scripts\python.exe -m tools.create_user admin1 --role admin --name "Control Room"   # asks for the password
+..\venv\Scripts\python.exe -m tools.create_user officer1 --role officer --generate         # prints a new password once
+..\venv\Scripts\python.exe -m tools.create_user --list
+..\venv\Scripts\python.exe -m tools.create_user officer1 --delete
+```
+
+The first run also adds a random `SECRET_KEY` to `.env`, which signs the session tokens (8 h,
+`SESSION_HOURS`). Changing it logs everyone out. No restart is needed after adding a user.
+
+| Role | Can |
+|---|---|
+| **admin** (Control Room Admin) | everything: Command Centre, acknowledge alerts, Video analysis (upload, test cameras), Reports |
+| **officer** (Security Officer) | Command Centre, acknowledge alerts, the classic view |
+
+A missing or expired token gets 401 with the reason, and the dashboard returns to the login page
+and says why. A wrong role gets 403. The Socket.IO connection is refused without a valid token.
+
+**The Command Centre** (`#/`, after login) is a dark control-room view for a projector:
+- **Top bar:** title, LIVE / DISCONNECTED, clock, the user and role, Enable sound / mute, logout,
+  and the views (Command Centre, Video analysis and Reports for admins, Classic view).
+- **KPI strip** (live, counters ease to new values): people now, zones at each risk level, the
+  highest risk and where, unacknowledged alerts, cameras online / total, the active model.
+- **Ghat map:** the exit graph drawn from `config/site_map.json`, labelled *Schematic map, not
+  to scale* (the positions are a layout, not surveyed coordinates; replace them when a site map
+  exists). Camera nodes are coloured by live risk, with the word and icon, and pulse at
+  ORANGE/RED. Hover for the figures; click or press Enter to select. Walkways get thicker and
+  warmer with live crowd pressure. The selected zone's best route to the safest gate is an
+  animated line. Nodes fed only by a test video are marked TEST.
+- **Side panels for the selected zone:** the camera every 2 s with None / Detections / Density
+  heatmap / Grid + hotspot, a 10-minute chart of density (on the risk bands) and people,
+  turbulence, the counting method and hotspot, the safest exit with two alternatives and the
+  gate actions, and camera status.
+- **Alerts:** the live feed, filterable by level and "unacknowledged only", with Acknowledge
+  (who and when are stored). An unacknowledged RED alert shows a full-width banner on every page,
+  and the siren repeats every 30 s until someone acknowledges it.
+
+The original dashboard is unchanged at `#/classic`.
+
 ## Dashboard (frontend)
 
 Vite + React + Tailwind CSS 3 (pinned: v4 has no `npx tailwindcss init`). With the backend running:
@@ -220,8 +266,9 @@ report says so.
 
 ## Viva demo script (about 3 minutes)
 
-Before the viva: run `scripts\start_demo.ps1`, open http://localhost:5173 on the projector and
-click **Enable sound**. Keep a phone with Telegram on the same Wi-Fi. The three demo clips read
+Before the viva: run `scripts\start_demo.ps1`, open http://localhost:5173 on the projector, log
+in and click **Enable sound**. The Command Centre (`#/`) is the main screen; the same steps also
+work in the classic view (`#/classic`). Keep a phone with Telegram on the same Wi-Fi. The three demo clips read
 GREEN (their area estimates are large), so to show an escalation add a clip on the Video
 analysis page as a live camera with a small visible area (e.g. 20 m²). It is tagged "Test video"
 and its alerts start with `[VIDEO TEST]`: say so when presenting.
@@ -405,7 +452,9 @@ git (they are ignored).
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/health` | Status, `model_loaded`, `detector`, `hybrid`, zones, storage (mongodb/memory), frame source, camera heartbeats, `last_cycle_s`, `server_time` |
+| POST | `/api/auth/login` | `{username, password}` → `{token, expires_at, user}`; 401 wrong username or password |
+| POST / GET | `/api/auth/logout` / `/api/auth/me` | End the session (token revoked) / who is logged in |
+| GET | `/health` | Public. Status, `model_loaded`, `detector`, `hybrid`, zones, storage (mongodb/memory), frame source, camera heartbeats, `last_cycle_s`, `server_time` |
 | GET | `/api/config` | Risk thresholds (`yellow`, `orange`, `red`), burst interval, smoothing window, alert cooldown |
 | GET | `/api/zones` | Zone configs (camera passwords hidden) |
 | GET | `/api/zones/{zone_id}/status` | Latest reading: density, turbulence, pressure, risk_level, count, exits, `server_time` |
@@ -418,6 +467,8 @@ git (they are ignored).
 | POST | `/api/zones/{zone_id}/infer` | Run inference now on the zone's newest frames |
 | GET | `/api/alerts/recent?limit=20` | Recent alerts, newest first, each with its deliveries per channel |
 | GET | `/api/incidents?limit=50` | Recent incidents (continuous ORANGE/RED periods) |
+| POST | `/api/alerts/{id}/ack` | Acknowledge an alert (stores who and when; emits `alert_ack`); 404 unknown |
+| GET | `/api/site-map` | Schematic node positions (`config/site_map.json`) and every walkway with its length |
 | GET | `/api/reports/alerts` (`/incidents`) | Alert (incident) history, newest first; filters `zone_id`, `level` (repeatable), `since`, `until` (epoch s), `limit` |
 | GET | `/api/reports/summary` | Per zone: readings, peak count / density / pressure with times, highest level, seconds at each level; filters `zone_id`, `since`, `until` |
 | GET | `/api/video/options` | Upload limit, file types, model (trained/demo/untrained), Telegram available, exit-map locations |
@@ -436,15 +487,16 @@ reason when there is no frame or no model yet, and an `X-Frame-Timestamp` header
 frame's capture time. Times are Unix epoch seconds; `server_time` lets a client judge a
 reading's age without trusting its own clock.
 
-Socket.IO (path `/socket.io`) events:
+Socket.IO (path `/socket.io`; connect with `auth: {token}`, refused without a valid one) events:
 - `density_update` (every 2 s per zone, sent as soon as that zone is processed): `{zone_id,
   name, timestamp, server_time, density, turbulence, pressure, raw_pressure, risk_level, count,
   samples, exits: [{exit, cost, path}], count_method, density_count, detection_count,
   grid: {rows, cols, counts, density, hotspot}, hotspot, gate_actions: [{kind, text, gates}]}`.
   `pressure` is the 30 s mean that sets `risk_level`.
 - `alert`: `{id, zone_id, risk_level, message, timestamp, incident_id, delivered,
-  deliveries: [{channel, recipient, delivered, latency_ms, error}]}`, the same shape as
-  `/api/alerts/recent`.
+  deliveries: [{channel, recipient, delivered, latency_ms, error}], hotspot, gate_actions,
+  acknowledged_by, acknowledged_at}`, the same shape as `/api/alerts/recent`.
+- `alert_ack`: the same alert once someone acknowledges it.
 - `video_job`: a job's state (as `/api/jobs/{job_id}`), at most twice a second while it runs;
   `state: "deleted"` when it is deleted.
 - `zones_changed`: `{added}` or `{removed}` when a video zone is added or removed.
