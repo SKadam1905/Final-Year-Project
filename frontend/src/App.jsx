@@ -8,6 +8,8 @@ import ReportsPage from "./components/ReportsPage.jsx";
 import StatusNotice from "./components/StatusNotice.jsx";
 import VideoPage from "./components/VideoPage.jsx";
 import ZoneGrid from "./components/ZoneGrid.jsx";
+import CommandCentre from "./cc/CommandCentre.jsx";
+import TopBar from "./cc/TopBar.jsx";
 
 // The detail view and the video report carry the chart library; load them only when opened,
 // which keeps the first page load light on a guard's phone.
@@ -33,24 +35,55 @@ function AdminOnly() {
   );
 }
 
-/** Everything after login. Live monitoring stays connected on every page, so RED banners show up
- * during a video analysis too. */
+/** Everything after login. Live monitoring stays connected on every page, so alerts and banners
+ * show up during a video analysis too. #/ is the Command Centre; #/classic the original dashboard. */
 function Workspace({ user, onLogout }) {
-  const { state, now, connection, backend, dismissBanner, loadHistory } = useLiveZones();
+  const live = useLiveZones();
   const route = useHashRoute();
   const videoJobs = useVideoJobs(user.role === "admin");
-  const sound = useAlertSound(state.alerts); // siren for RED, tone for ORANGE, each alert once
+  const sound = useAlertSound(live.state.alerts); // siren for RED, tone for ORANGE, each alert once
+  const [ccSelected, setCcSelected] = useState(null);
+  const allowed = user.role === "admin" || !ADMIN_PAGES.has(route.page);
+  const zones = sortZones(Object.values(live.state.zones), live.now, live.connection === "live");
+
+  if (route.page === "classic") {
+    return <ClassicView live={live} user={user} onLogout={onLogout} sound={sound} />;
+  }
+  return (
+    <div className="min-h-screen bg-navy-950 font-body text-slate-100">
+      <TopBar connection={live.connection} now={live.now} user={user} onLogout={onLogout} sound={sound} page={route.page} />
+      {route.page === "live" && <CommandCentre live={live} selectedId={ccSelected} onSelect={setCcSelected} />}
+      {route.page !== "live" && (
+        <div className="min-h-[calc(100vh-4rem)] bg-slate-100 font-sans text-slate-900">
+          {!allowed && <AdminOnly />}
+          {allowed && route.page === "video" && (
+            <VideoPage jobs={videoJobs.list} onJob={videoJobs.upsert} videoZones={zones.filter((z) => z.kind === "video")} />
+          )}
+          {allowed && route.page === "reports" && <ReportsPage zones={zones} />}
+          {allowed && route.page === "report" && (
+            <Suspense fallback={loading}>
+              <VideoReport jobId={route.jobId} job={videoJobs.jobs[route.jobId]} loaded={videoJobs.loaded} onJob={videoJobs.upsert} />
+            </Suspense>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The original dashboard, unchanged, as a fallback (#/classic). */
+function ClassicView({ live, user, onLogout, sound }) {
+  const { state, now, connection, backend, dismissBanner, loadHistory } = live;
+  const route = useHashRoute();
   const [selectedId, setSelectedId] = useState(null);
   const [overlay, setOverlay] = useState("none");
-  const live = route.page === "live" || route.page === "classic";
-  const feed = useZoneFeed(live ? selectedId : null, overlay);
+  const feed = useZoneFeed(selectedId, overlay);
 
   const connected = connection === "live";
   const zones = sortZones(Object.values(state.zones), now, connected);
   const zoneNames = Object.fromEntries(zones.map((z) => [z.id, z.name]));
   const selected = selectedId ? state.zones[selectedId] : null;
   const showZones = backend.status === "ok" || backend.health;
-  const allowed = user.role === "admin" || !ADMIN_PAGES.has(route.page);
 
   useEffect(() => {
     if (selectedId) loadHistory(selectedId);
@@ -68,18 +101,7 @@ function Workspace({ user, onLogout }) {
         <RedAlertBanners alerts={activeBanners(state)} zoneNames={zoneNames} onDismiss={dismissBanner} />
       </div>
 
-      {!allowed && <AdminOnly />}
-      {allowed && route.page === "video" && (
-        <VideoPage jobs={videoJobs.list} onJob={videoJobs.upsert} videoZones={zones.filter((z) => z.kind === "video")} />
-      )}
-      {allowed && route.page === "reports" && <ReportsPage zones={zones} />}
-      {allowed && route.page === "report" && (
-        <Suspense fallback={loading}>
-          <VideoReport jobId={route.jobId} job={videoJobs.jobs[route.jobId]} loaded={videoJobs.loaded} onJob={videoJobs.upsert} />
-        </Suspense>
-      )}
-      {live && (
-        <main className="mx-auto grid max-w-7xl gap-6 px-3 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <main className="mx-auto grid max-w-7xl gap-6 px-3 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <section aria-labelledby="zones-heading">
             <h2 id="zones-heading" className="sr-only">Zones, highest risk first</h2>
             <StatusNotice backend={backend} connection={connection} apiUrl={API_URL} zoneCount={zones.length} />
@@ -87,10 +109,9 @@ function Workspace({ user, onLogout }) {
               countsAvailable={backend.health?.model_loaded !== false} />}
           </section>
           <AlertPanel alerts={state.alerts} zoneNames={zoneNames} />
-        </main>
-      )}
+      </main>
 
-      {live && selected && (
+      {selected && (
         <Suspense fallback={<div className="fixed inset-0 z-30 bg-slate-900/70" aria-busy="true" />}>
           <ZoneDetail
             zone={selected}

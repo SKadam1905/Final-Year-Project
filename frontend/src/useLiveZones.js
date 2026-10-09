@@ -7,6 +7,7 @@ import { API_URL, api, fetchImage, imageUrl, socketOptions, socketRefused } from
 import { initialState, reducer } from "./liveState.js";
 
 const RETRY_MS = 5000;
+const HEALTH_MS = 5000;
 
 /**
  * Live dashboard state. `connection` is "connecting" | "live" | "disconnected";
@@ -40,6 +41,19 @@ export function useLiveZones() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Camera status, model and cycle time change without a socket event: refresh /health every 5 s.
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      try {
+        const health = await api.health();
+        setBackend((previous) => (previous.status === "ok" ? { ...previous, health } : previous));
+      } catch {
+        // the socket and the retry below report an unreachable backend
+      }
+    }, HEALTH_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (backend.status !== "unreachable") return undefined;

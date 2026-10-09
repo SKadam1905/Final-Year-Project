@@ -8,7 +8,8 @@ const CONNECTION = {
 };
 
 const PAGES = [
-  { page: "live", href: routeHref.live, label: "Live dashboard" },
+  { page: "command", href: routeHref.live, label: "Command Centre" },
+  { page: "classic", href: routeHref.classic, label: "Live dashboard" },
   { page: "video", href: routeHref.video, label: "Video analysis", admin: true },
   { page: "reports", href: routeHref.reports, label: "Reports", admin: true },
 ];
@@ -37,7 +38,7 @@ function SoundControl({ sound }) {
 
 export default function Header({ connection, lastUpdate, page = "live", sound = null, user = null, onLogout = null }) {
   const status = CONNECTION[connection];
-  const current = page === "report" ? "video" : page === "classic" ? "live" : page;
+  const current = page === "report" ? "video" : page === "live" ? "classic" : page;
   const pages = PAGES.filter((item) => !item.admin || !user || user.role === "admin");
   return (
     <header className="sticky top-0 z-20 bg-slate-900 text-white shadow print:hidden">
