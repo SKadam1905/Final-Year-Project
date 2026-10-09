@@ -1,12 +1,14 @@
 """Convert raw datasets into the processed training layout (see ml.dataset_index).
 
-    python -m ml.prepare_dataset shanghaitech           # data/shanghaitech_part_a -> data/processed/shanghaitech_a
+    python -m ml.prepare_dataset shanghaitech           # data/shanghaitech (Part A) -> data/processed/shanghaitech_a
+    python -m ml.prepare_dataset shanghaitech_b         # data/shanghaitech (Part B) -> data/processed/shanghaitech_b
     python -m ml.prepare_dataset qnrf                   # data/ucf_qnrf -> data/processed/ucf_qnrf (long side <= 2048)
     python -m ml.prepare_dataset india --test-videos shirdi_01 --val-videos pandharpur_02
 
 Each image is resized so both sides are multiples of 8 (and the long side <= --max-side);
-head points are scaled with it, a geometry-adaptive density map is built, then sum-pooled
-to 1/8 resolution (CSRNet's output stride), which keeps the count exact.
+head points are scaled with it, a density map is built (geometry-adaptive kernels; a fixed
+sigma of 15 px for ShanghaiTech Part B, as in the CSRNet paper), then sum-pooled to 1/8
+resolution (CSRNet's output stride), which keeps the count exact.
 
 Splits: ShanghaiTech/QNRF keep their official train/test and carve `val` out of train
 (--val-fraction). The India dataset is split by whole video (--test-videos/--val-videos,
@@ -35,7 +37,8 @@ from ml.density_maps import density_map, sum_pool
 
 LOADERS = {"shanghaitech": load_shanghaitech_mat, "qnrf": load_qnrf_mat, "json": lambda p: load_points_json(p).points}
 DEFAULTS = {  # dataset -> (raw root, processed folder name, default max side)
-    "shanghaitech": (DATA_DIR / "shanghaitech_part_a", "shanghaitech_a", None),
+    "shanghaitech": (DATA_DIR / "shanghaitech", "shanghaitech_a", None),
+    "shanghaitech_b": (DATA_DIR / "shanghaitech", "shanghaitech_b", None),
     "qnrf": (DATA_DIR / "ucf_qnrf", "ucf_qnrf", 2048),
     "india": (DATA_DIR / "india_dataset" / "frames", "india", None),
 }
@@ -64,8 +67,11 @@ def _find_base(root: Path, marker: str, prefer: str) -> Path:
     raise FileNotFoundError(f"expected one folder containing '{marker}' under {root}, found {candidates}")
 
 
-def find_shanghaitech(root: Path) -> list[RawItem]:
-    base = _find_base(root, "train_data", prefer="part_a")
+FIXED_SIGMA = {"shanghaitech_b": 15.0}  # Part B: fixed kernels (sparser crowds); the others adaptive
+
+
+def find_shanghaitech(root: Path, prefer: str = "part_a") -> list[RawItem]:
+    base = _find_base(root, "train_data", prefer=prefer)
     items = []
     for split in ("train", "test"):
         folder = base / f"{split}_data"
@@ -103,7 +109,7 @@ def find_point_json(frames_root: Path, annotations_root: Path) -> list[RawItem]:
     return items
 
 
-def process_item(item: RawItem, out_root: Path, max_side: int | None) -> Sample:
+def process_item(item: RawItem, out_root: Path, max_side: int | None, sigma: float | None = None) -> Sample:
     image = read_image(item.image)
     points = LOADERS[item.format](item.annotation)
     h, w = image.shape[:2]
@@ -115,7 +121,7 @@ def process_item(item: RawItem, out_root: Path, max_side: int | None) -> Sample:
         interp = cv2.INTER_AREA if new_w < w else cv2.INTER_LINEAR
         image = cv2.resize(image, (new_w, new_h), interpolation=interp)
         points = points * np.array([new_w / w, new_h / h])
-    density = sum_pool(density_map(points, (new_h, new_w)), OUTPUT_STRIDE)
+    density = sum_pool(density_map(points, (new_h, new_w), sigma=sigma), OUTPUT_STRIDE)
 
     image_path = out_root / "images" / f"{item.id}.jpg"
     density_path = out_root / "density" / f"{item.id}.npy"
@@ -166,8 +172,9 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> None:
     args = parse_args(argv)
-    if args.dataset == "shanghaitech":
-        items = find_shanghaitech(args.root)
+    sigma = FIXED_SIGMA.get(args.dataset)
+    if args.dataset in ("shanghaitech", "shanghaitech_b"):
+        items = find_shanghaitech(args.root, prefer="part_b" if args.dataset == "shanghaitech_b" else "part_a")
     elif args.dataset == "qnrf":
         items = find_qnrf(args.root)
     else:
@@ -180,14 +187,14 @@ def main(argv=None) -> None:
 
     if args.workers > 1:
         with ProcessPoolExecutor(args.workers) as pool:
-            futures = [pool.submit(process_item, item, args.out, args.max_side) for item in items]
+            futures = [pool.submit(process_item, item, args.out, args.max_side, sigma) for item in items]
             samples = []
             for n, future in enumerate(futures, 1):
                 samples.append(future.result())
                 if n % 50 == 0:
                     print(f"  {n}/{len(items)}")
     else:
-        samples = [process_item(item, args.out, args.max_side) for item in items]
+        samples = [process_item(item, args.out, args.max_side, sigma) for item in items]
 
     write_index(args.out, samples)
     per_split = Counter(s.split for s in samples)

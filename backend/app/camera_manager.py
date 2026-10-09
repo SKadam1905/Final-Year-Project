@@ -23,7 +23,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from app.config import ZoneConfig, get_settings, load_zones
+from app.config import ZoneConfig, get_settings, load_zones, redact
 from app.frame_codec import decode_burst, encode_burst
 
 log = logging.getLogger(__name__)
@@ -66,7 +66,8 @@ def write_heartbeat(redis_client, zone_id: str, info: dict, ttl_s: int = 90) -> 
 class FrameGrabber(threading.Thread):
     """Continuously reads one source, keeping its newest `burst_size` frames.
 
-    Reconnects with exponential backoff (1, 2, 4, 8 ... up to 30 s) when the stream drops.
+    Reconnects with exponential backoff (1, 2, 4, 8 ... up to 30 s) when the stream drops; an outage
+    is logged once when it starts and once when the camera is back.
     Network streams time out after `timeout_s` when opening or reading (OpenCV's default is
     30 s). Video files are paced at their own frame rate and looped, like a live camera.
     """
@@ -112,19 +113,23 @@ class FrameGrabber(threading.Thread):
         ])
 
     def run(self) -> None:
-        backoff = 1.0
+        backoff = min(1.0, self.max_backoff_s)
         while not self._stopping.is_set():
             cap = self._open()
             if cap.isOpened():
+                if self.status == "offline":
+                    log.info("camera %s back online", redact(self.source))
                 self.status = "online"
-                backoff = 1.0
+                backoff = min(1.0, self.max_backoff_s)
                 self._read_until_failure(cap)
             cap.release()
             if self._stopping.is_set():
                 break
+            if self.status != "offline":  # the outage starts: later retries are not logged
+                log.warning("camera %s offline; retrying every %.0f-%.0f s", redact(self.source), backoff,
+                            self.max_backoff_s)
             self.status = "offline"
             self.reconnects += 1
-            log.warning("camera %s offline; retrying in %.0f s", self.source, backoff)
             self._stopping.wait(backoff)
             backoff = min(backoff * 2, self.max_backoff_s)
 

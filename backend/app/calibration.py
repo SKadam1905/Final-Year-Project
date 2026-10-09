@@ -136,11 +136,98 @@ class ZoneGeometry:
             self._mask &= np.isfinite(self._areas)
         self._key = key
 
-    def measure(self, density: np.ndarray, frame_size: tuple[int, int]) -> tuple[float, float]:
-        """(heads in zone, persons per m²) for a density map covering a (w, h) frame."""
+    def cell_density(self, density: np.ndarray, frame_size: tuple[int, int]) -> np.ndarray:
+        """Persons per m² in each density-map cell (0 outside the zone), for heatmaps.
+
+        With calibration each cell is divided by its own ground area. With only `area_m2`, the
+        zone's area is shared equally by its cells, so a uniform map shows the zone's density
+        everywhere.
+        """
         self._prepare(frame_size, density.shape)
-        count = float(density[self._mask].sum())
+        out = np.zeros(density.shape, np.float32)
+        if self._areas is not None:
+            out[self._mask] = density[self._mask] / self._areas[self._mask]
+        else:
+            out[self._mask] = density[self._mask] * float(self._mask.sum()) / float(self.area_m2)
+        return np.clip(out, 0.0, None)
+
+    def ground_area(self, frame_size: tuple[int, int], grid_shape: tuple[int, int]) -> float:
+        """Ground area of the zone in m² (from calibration over a density map's grid, else area_m2)."""
+        self._prepare(frame_size, grid_shape)
         area = float(self._areas[self._mask].sum()) if self._areas is not None else float(self.area_m2)
         if area <= 0:
             raise ValueError("zone has no valid ground area; check the ROI and calibration")
+        return area
+
+    def measure(self, density: np.ndarray, frame_size: tuple[int, int]) -> tuple[float, float]:
+        """(heads in zone, persons per m²) for a density map covering a (w, h) frame."""
+        area = self.ground_area(frame_size, density.shape)
+        count = float(density[self._mask].sum())
         return count, max(count, 0.0) / area
+
+    def in_zone(self, points: np.ndarray) -> np.ndarray:
+        """Which image points (N, 2), e.g. detected people's feet, lie inside the ROI (all without one)."""
+        points = np.asarray(points, np.float64).reshape(-1, 2)
+        return np.ones(len(points), bool) if self.roi is None else points_in_polygon(points, self.roi)
+
+    def grid(self, density: np.ndarray, frame_size: tuple[int, int], rows: int = 3, cols: int = 3,
+             points: np.ndarray | None = None) -> ZoneGrid:
+        """Zone-wise segmentation: people and persons/m² in each cell of a rows x cols grid over the
+        frame. People come from `points` (detected feet) when given, else from the density map.
+        A cell's ground area is the calibrated area of its part of the zone, else its share of area_m2."""
+        self._prepare(frame_size, density.shape)
+        dh, dw = density.shape
+        r = np.minimum(((np.arange(dh) + 0.5) * rows / dh).astype(int), rows - 1)
+        c = np.minimum(((np.arange(dw) + 0.5) * cols / dw).astype(int), cols - 1)
+        cell = (r[:, None] * cols + c[None, :])[self._mask]  # grid cell of each density-map cell in the zone
+        n = rows * cols
+        if self._areas is not None:
+            areas = np.bincount(cell, weights=self._areas[self._mask], minlength=n)
+        else:
+            areas = np.bincount(cell, minlength=n) * float(self.area_m2) / max(len(cell), 1)
+        if points is None:
+            counts = np.bincount(cell, weights=density[self._mask], minlength=n)
+        else:
+            pts = np.asarray(points, np.float64).reshape(-1, 2)
+            pts = pts[self.in_zone(pts)]
+            w, h = frame_size
+            pr = np.clip((pts[:, 1] * rows / h).astype(int), 0, rows - 1)
+            pc = np.clip((pts[:, 0] * cols / w).astype(int), 0, cols - 1)
+            counts = np.bincount(pr * cols + pc, minlength=n).astype(np.float64)
+        counts = np.clip(counts, 0.0, None)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            per_m2 = np.where(areas > 0, counts / np.where(areas > 0, areas, 1.0), 0.0)
+        return ZoneGrid(counts.reshape(rows, cols), per_m2.reshape(rows, cols))
+
+
+ROW_NAMES = ("top", "middle", "bottom")
+COL_NAMES = ("left", "centre", "right")
+
+
+def cell_label(row: int, col: int, rows: int, cols: int) -> str:
+    """'top-left' ... 'centre' ... 'bottom-right' on a 3x3 grid; 'row r, column c' otherwise."""
+    if (rows, cols) == (3, 3):
+        return "centre" if (row, col) == (1, 1) else f"{ROW_NAMES[row]}-{COL_NAMES[col]}"
+    return f"row {row + 1}, column {col + 1}"
+
+
+class ZoneGrid:
+    """People and persons/m² per cell of a camera view's grid, and its most crowded cell."""
+
+    def __init__(self, counts: np.ndarray, density: np.ndarray) -> None:
+        self.counts = counts
+        self.density = density
+
+    def hotspot(self) -> dict | None:
+        """The cell with the highest persons/m² (None if the view is empty)."""
+        if self.density.size == 0 or float(self.density.max()) <= 0:
+            return None
+        row, col = (int(i) for i in np.unravel_index(int(np.argmax(self.density)), self.density.shape))
+        rows, cols = self.density.shape
+        return {"row": row, "col": col, "label": cell_label(row, col, rows, cols),
+                "count": round(float(self.counts[row, col]), 1), "density": round(float(self.density[row, col]), 3)}
+
+    def to_dict(self) -> dict:
+        rows, cols = self.counts.shape
+        return {"rows": rows, "cols": cols, "counts": np.round(self.counts, 1).tolist(),
+                "density": np.round(self.density, 3).tolist(), "hotspot": self.hotspot()}

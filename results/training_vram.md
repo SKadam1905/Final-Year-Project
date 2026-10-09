@@ -1,0 +1,16 @@
+# CSRNet training memory by batch and crop size
+
+| batch | crop_px | pixels_per_step_M | peak_allocated_gb | peak_reserved_gb | s_per_step | fits |
+|---|---|---|---|---|---|---|
+| 8 | 256 | 0.52 | 0.6 | 0.8 | 0.783 | yes |
+| 8 | 384 | 1.18 | 1.16 | 1.96 | 1.356 | yes |
+| 8 | 448 | 1.61 | 1.64 | 2.54 | 1.999 | yes |
+| 8 | 512 | 2.1 | 2.05 | 3.04 | 2.419 | yes |
+| 12 | 384 | 1.77 | 1.77 | 3.03 | 2.053 | yes |
+| 16 | 384 | 2.36 | 2.28 | 3.76 | 2.745 | no (too close to the limit) |
+| 4 | 512 | 1.05 | 1.17 | 1.86 | 1.234 | yes |
+| 6 | 512 | 1.57 | 1.61 | 2.5 | 1.827 | yes |
+
+- NVIDIA GeForce RTX 2050, 4.0 GB; mixed precision (torch.amp), Adam, batch of random tensors.
+- 'fits' = runs and leaves >= 0.5 GB free for the CUDA context and the display.
+- Largest setting that fits: batch 8 x 512 px.

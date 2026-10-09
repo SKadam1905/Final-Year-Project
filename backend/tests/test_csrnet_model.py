@@ -71,3 +71,20 @@ def test_estimator_predicts_on_cpu(tmp_path, model):
     assert result.input_size == (128, 80) and result.frame_size == (200, 120)
     assert result.density.shape == (10, 16)
     assert result.count == pytest.approx(float(result.density.sum()), rel=1e-5)
+
+
+def test_weights_describe_their_provenance():
+    from app.csrnet_model import describe_weights
+
+    public = {"provenance": {"source": "public_pretrained", "dataset": "ShanghaiTech Part A", "origin": "authors",
+                             "authors_reported_mae": 66.4, "test_mae": None, "test_rmse": None}}
+    info = describe_weights(public, "csrnet_partA_public.pth")
+    assert info["kind"] == "public_pretrained" and info["dataset"] == "ShanghaiTech Part A"
+    assert "not yet evaluated on this machine" in info["label"] and info["test_mae"] is None
+    public["provenance"].update(test_mae=70.1, test_rmse=110.2)
+    assert "test MAE 70.1 / RMSE 110.2 measured here" in describe_weights(public, "x.pth")["label"]
+
+    ours = {"provenance": {"source": "trained_here", "dataset": "shanghaitech_a", "val_mae": 61.2, "test_mae": 69.0}}
+    assert describe_weights(ours, "parta_best.pth")["kind"] == "trained"
+    assert describe_weights({"demo": True}, "d.pth")["kind"] == "demo"
+    assert describe_weights({"model": {}}, "random.pth")["kind"] == "untrained"  # no provenance: not trusted

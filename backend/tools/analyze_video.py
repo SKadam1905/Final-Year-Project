@@ -19,7 +19,7 @@ import cv2
 from app.config import REPO_ROOT, ZoneConfig, get_settings, load_zones
 from app.csrnet_model import DensityEstimator
 from app.pipeline import ZoneAnalyzer
-from app.visualize import draw_banner, draw_polygon, overlay_density
+from app.visualize import density_scale, draw_banner, draw_density_legend, draw_polygon, overlay_density_m2
 
 
 def parse_roi(text: str | None) -> tuple[tuple[float, float], ...] | None:
@@ -66,13 +66,14 @@ def main(argv=None) -> None:
                                  allow_pickle=args.allow_pickle)
     analyzer = ZoneAnalyzer(zone, estimator, settings)
     step = max(args.burst, round(args.interval * fps))
+    scale = density_scale(settings.risk_yellow, settings.risk_orange, settings.risk_red)  # fixed persons/m² colours
     print(f"{args.video.name}: {width}x{height} @ {fps:.1f} fps, burst every {step} frames on {estimator.device}")
 
     csv_path = out_path.with_suffix(".csv")
     with open(csv_path, "w", newline="") as f:
         log = csv.writer(f)
         log.writerow(["time_s", "count", "density_m2", "turbulence", "pressure", "smoothed", "level",
-                      "inference_ms", "flow_ms"])
+                      "camera_motion_px", "flag", "inference_ms", "flow_ms"])
         burst, last, index = [], None, 0
         while True:
             ok, frame = cap.read()
@@ -82,15 +83,22 @@ def main(argv=None) -> None:
                 burst.append(frame)
             if len(burst) == args.burst:
                 last = analyzer.analyze(burst, timestamp=index / fps)
-                s = last.status
-                log.writerow([f"{s.timestamp:.1f}", f"{s.count:.1f}", f"{s.density:.3f}", f"{s.turbulence:.3f}",
-                              f"{s.pressure:.3f}", f"{s.smoothed_pressure:.3f}", s.level.name,
-                              f"{last.inference_ms:.0f}", f"{last.flow_ms:.0f}"])
-                print(f"t={s.timestamp:6.1f}s  count {s.count:7.1f}  {s.density:5.2f}/m²  turb {s.turbulence:.2f}  "
-                      f"pressure {s.smoothed_pressure:5.2f}  {s.level.name:6s}  ({last.inference_ms:.0f} ms CSRNet)")
+                if last.scene_cut:  # skipped: no reading, the risk average is untouched
+                    log.writerow([f"{index / fps:.1f}", "", "", "", "", "", "", "", "scene cut", "", ""])
+                    print(f"t={index / fps:6.1f}s  scene cut: skipped")
+                    last = None
+                else:
+                    s, t = last.status, last.turbulence
+                    log.writerow([f"{s.timestamp:.1f}", f"{s.count:.1f}", f"{s.density:.3f}", f"{s.turbulence:.3f}",
+                                  f"{s.pressure:.3f}", f"{s.smoothed_pressure:.3f}", s.level.name,
+                                  f"{t.camera_motion:.2f}", "moving camera" if t.moving_camera else "",
+                                  f"{last.inference_ms:.0f}", f"{last.flow_ms:.0f}"])
+                    print(f"t={s.timestamp:6.1f}s  count {s.count:7.1f}  {s.density:5.2f}/m²  turb {s.turbulence:.2f}  "
+                          f"pressure {s.smoothed_pressure:5.2f}  {s.level.name:6s}  ({last.inference_ms:.0f} ms CSRNet)")
                 burst = []
             if last is not None:
-                frame = overlay_density(frame, last.density.density)
+                per_m2 = analyzer.geometry.cell_density(last.density.density, last.density.frame_size)
+                frame = draw_density_legend(overlay_density_m2(frame, per_m2, scale), scale)
                 s = last.status
                 draw_banner(frame, [f"{s.level.name}  pressure {s.smoothed_pressure:.2f}",
                                     f"~{s.count:.0f} people  {s.density:.2f}/m2  turbulence {s.turbulence:.2f}"], s.level)

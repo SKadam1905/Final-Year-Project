@@ -11,6 +11,7 @@ training finishes.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,6 +80,45 @@ def load_weights(model: CSRNet, path: str | Path, allow_pickle: bool = False) ->
     return checkpoint
 
 
+TRUSTED_KINDS = ("trained", "public_pretrained")  # what the backend loads without DEMO_MODE=1
+
+
+def describe_weights(checkpoint: dict | None, path: str | Path | None) -> dict:
+    """What kind of model a checkpoint is, from the "provenance" record inside it.
+
+    kind: "trained" (trained here, ml.train_csrnet), "public_pretrained" (imported with
+    tools.import_public_weights), "demo" (scripts/make_demo.py: a fixed count) or "untrained"
+    (no provenance record: unknown or untrained weights). Only TRUSTED_KINDS are loaded by the
+    backend unless DEMO_MODE=1.
+    """
+    checkpoint = checkpoint or {}
+    name = Path(path).name if path else None
+    provenance = checkpoint.get("provenance")
+    if isinstance(provenance, dict) and provenance.get("source") == "public_pretrained":
+        test_mae, test_rmse = provenance.get("test_mae"), provenance.get("test_rmse")
+        measured = (f"test MAE {test_mae:.1f} / RMSE {test_rmse:.1f} measured here" if test_mae is not None
+                    else "not yet evaluated on this machine")
+        return {"kind": "public_pretrained", "weights": name, "dataset": provenance.get("dataset"),
+                "test_mae": test_mae, "test_rmse": test_rmse, "provenance": provenance,
+                "label": f"Public pretrained CSRNet ({provenance.get('dataset')}, {provenance.get('origin')}); "
+                         f"the authors report MAE {provenance.get('authors_reported_mae')}; {measured}."}
+    if isinstance(provenance, dict) and provenance.get("source") == "trained_here":
+        test_mae = provenance.get("test_mae")
+        return {"kind": "trained", "weights": name, "dataset": provenance.get("dataset"),
+                "val_mae": provenance.get("val_mae"), "test_mae": test_mae, "test_rmse": provenance.get("test_rmse"),
+                "provenance": provenance,
+                "label": f"CSRNet trained here on {provenance.get('dataset')} ({name}, validation MAE "
+                         f"{provenance.get('val_mae')}" + (f", test MAE {test_mae:.1f}" if test_mae is not None else "")
+                         + ")"}
+    if checkpoint.get("demo") or (isinstance(provenance, dict) and provenance.get("source") == "demo"):
+        return {"kind": "demo", "weights": name,
+                "label": "Demo model (scripts/make_demo.py): it ignores the image and always predicts the same "
+                         "count. Use it to try the system, not to judge a crowd."}
+    return {"kind": "untrained", "weights": name,
+            "label": "No provenance record (unknown or untrained weights): counts are not meaningful. Train with "
+                     "ml.train_csrnet or import public weights with tools.import_public_weights."}
+
+
 def resolve_device(device: str = "auto") -> torch.device:
     if device == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -99,6 +139,16 @@ def stride_aligned_size(width: int, height: int, max_width: int | None) -> tuple
         return max(OUTPUT_STRIDE, round(v * scale / OUTPUT_STRIDE) * OUTPUT_STRIDE)
 
     return align(width), align(height)
+
+
+def to_input(frame_bgr: np.ndarray, max_width: int | None) -> torch.Tensor:
+    """Network input (1, 3, H, W): resized to a stride-aligned size, ImageNet-normalised."""
+    h, w = frame_bgr.shape[:2]
+    size = stride_aligned_size(w, h, max_width)
+    if size != (w, h):
+        interp = cv2.INTER_AREA if size[0] < w else cv2.INTER_LINEAR
+        frame_bgr = cv2.resize(frame_bgr, size, interpolation=interp)
+    return torch.from_numpy(normalize_image(frame_bgr)).unsqueeze(0)
 
 
 @dataclass(frozen=True)
@@ -122,25 +172,24 @@ class DensityEstimator:
     ) -> None:
         self.device = resolve_device(device)
         self.model = CSRNet(pretrained_frontend=False)
-        if weights is not None:
-            load_weights(self.model, weights, allow_pickle=allow_pickle)
+        checkpoint = load_weights(self.model, weights, allow_pickle=allow_pickle) if weights is not None else None
+        self.info = describe_weights(checkpoint, weights)
         self.model.to(self.device).eval()
         self.max_width = max_width
         self.amp = amp and self.device.type == "cuda"
+        # Zones run in parallel threads; the GPU would run their passes one after another anyway,
+        # but concurrent passes each hold their activations, so peak memory would grow with the
+        # number of cameras (about 0.55 GB per 720p frame). One pass at a time keeps it flat.
+        self._lock = threading.Lock()
 
     def preprocess(self, frame_bgr: np.ndarray) -> torch.Tensor:
-        h, w = frame_bgr.shape[:2]
-        size = stride_aligned_size(w, h, self.max_width)
-        if size != (w, h):
-            interp = cv2.INTER_AREA if size[0] < w else cv2.INTER_LINEAR
-            frame_bgr = cv2.resize(frame_bgr, size, interpolation=interp)
-        return torch.from_numpy(normalize_image(frame_bgr)).unsqueeze(0)
+        return to_input(frame_bgr, self.max_width)
 
     @torch.inference_mode()
     def predict(self, frame_bgr: np.ndarray) -> DensityResult:
-        x = self.preprocess(frame_bgr).to(self.device)
-        with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.amp):
-            out = self.model(x)
-        density = out.float()[0, 0].cpu().numpy()
+        x = self.preprocess(frame_bgr)
+        with self._lock, torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.amp):
+            out = self.model(x.to(self.device))
+            density = out.float()[0, 0].cpu().numpy()
         h, w = frame_bgr.shape[:2]
         return DensityResult(density, float(density.sum()), (x.shape[3], x.shape[2]), (w, h))

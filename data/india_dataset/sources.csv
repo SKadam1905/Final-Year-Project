@@ -1,1 +1,4 @@
 video_id,url,title,channel,upload_date,accessed_date,clip_start_s,clip_end_s,notes
+kumbh_aerial_news9,,(title not recorded) aerial drone view of the Maha Kumbh crowd,News9 (on-screen logo),,2026-10-08,0,120,"Cut from test_video.mp4 (uploaded on the Video analysis page); source URL not recorded - please fill in. Channel end card after 120.2 s removed."
+prayagraj_ghat_pti,,Maha Kumbh AI-enabled cameras drones monitor crowd and traffic in Prayagraj,PTI (on-screen logo),,2026-10-08,0,24,"Ghat crowd shots before the interviews; source URL not recorded - please fill in."
+prayagraj_sangam_pti,,Maha Kumbh AI-enabled cameras drones monitor crowd and traffic in Prayagraj,PTI (on-screen logo),,2026-10-08,99.9,109.7,"Dense crowd at the Sangam (one shot); same source video as prayagraj_ghat_pti."

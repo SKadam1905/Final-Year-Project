@@ -49,6 +49,9 @@ def test_prepare_shanghaitech_layout(tmp_path, rng):
 
     samples = read_index(out)
     assert sorted(s.split for s in samples) == ["test", "train", "train", "val"]
+    # The validation image is taken from the training images; the test images stay untouched.
+    assert all(s.id.startswith("train_") for s in samples if s.split == "val")
+    assert [s.id for s in samples if s.split == "test"] == ["test_IMG_1"]
     for s in samples:
         density = np.load(s.density)
         assert s.width % 8 == 0 and s.height % 8 == 0

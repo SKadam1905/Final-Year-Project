@@ -7,6 +7,8 @@ __pycache__/
 
 # Secrets
 .env
+.env.example
+
 
 # Datasets, videos and generated files (large; keep out of git)
 data/**
@@ -14,7 +16,21 @@ data/**
 !data/india_dataset/
 !data/india_dataset/sources.csv
 outputs/
-results/
+backend/ml/results/
+# Uploaded videos and their analyses (Video analysis page); also covered by data/** above
+data/uploads/
+
+# Phase 5 results: tables and figures are kept for the thesis; weights, logs and raw outputs are not
+results/*.pth
+results/raw/
+results/train_stdout.log
+results/train_stderr.log
+results/train.pid
+results/train_status.txt
+results/*.log
+results/demo.pids
+# frames of news footage with identifiable faces (ethics: do not publish raw frames)
+results/kumbh_check/*.jpg
 
 # Model weights
 *.pth

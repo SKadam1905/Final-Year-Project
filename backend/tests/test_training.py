@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+from app.csrnet_model import describe_weights
 from ml.dataset_index import read_index
 from ml.datasets import CrowdDataset, random_crop
 from ml.evaluate import main as evaluate_main
@@ -26,6 +27,36 @@ def test_random_crop_is_grid_aligned_and_padded():
     assert small_img.shape == (96, 96, 3) and small_den.shape == (12, 12) and small_den.sum() == 11 * 12
 
 
+def test_crop_and_flip_keep_the_density_target_aligned():
+    """The 1/8-resolution target must be exactly the density of the cropped (and flipped) pixels.
+
+    Each pixel's colour encodes its own column and row, so the returned crop reveals where it
+    was taken from and whether it was mirrored.
+    """
+    from ml.density_maps import density_map, sum_pool
+
+    h, w, crop = 96, 160, 64
+    rows, cols = np.mgrid[0:h, 0:w]
+    image = np.dstack([cols, rows, np.zeros_like(rows)]).astype(np.uint8)
+    full = density_map(np.random.default_rng(3).uniform([0, 0], [w, h], (40, 2)), (h, w), sigma=2.0)
+    dataset = CrowdDataset([], train=True, crop_size=crop, color_jitter=False, grayscale_p=0)
+
+    flipped_runs = 0
+    for seed in range(20):
+        torch.manual_seed(seed)
+        crop_img, crop_den = dataset._augment(image, sum_pool(full, 8))
+        flipped = crop_img[0, 1, 0] < crop_img[0, 0, 0]
+        x0 = int(crop_img[0, 0, 0]) - (crop - 1 if flipped else 0)
+        y0 = int(crop_img[0, 0, 1])
+        assert x0 % 8 == 0 and y0 % 8 == 0  # grid-aligned, so pooling stays exact
+        region = full[y0 : y0 + crop, x0 : x0 + crop]
+        expected = sum_pool(region, 8)[:, ::-1] if flipped else sum_pool(region, 8)
+        np.testing.assert_allclose(crop_den, expected, rtol=1e-5, atol=1e-7)
+        assert crop_den.sum() == pytest.approx(region.sum(), rel=1e-5)  # count preserved
+        flipped_runs += flipped
+    assert 0 < flipped_runs < 20  # both the flipped and unflipped branches were checked
+
+
 def test_dataset_items(processed):
     torch.manual_seed(0)
     train = CrowdDataset(read_index(processed, ["train"]), train=True, crop_size=64)
@@ -44,9 +75,20 @@ def test_train_resume_and_evaluate(processed, tmp_path, capsys):
               "--crop", "64", "--workers", "0", "--device", "cpu", "--no-pretrained", "--max-steps", "1"]
     train_main(common + ["--epochs", "1"])
     assert (out / "tiny_best.pth").exists() and (out / "tiny_last.pth").exists()
+    best = torch.load(out / "tiny_best.pth", map_location="cpu", weights_only=True)
+    prov = best["provenance"]  # where these weights came from travels inside the file
+    assert (prov["source"], prov["dataset"], prov["epochs"], prov["test_mae"]) == ("trained_here", processed.name, 1, None)
+    assert prov["val_mae"] == pytest.approx(best["val_mae"], abs=1e-3)
+    assert describe_weights(best, out / "tiny_best.pth")["kind"] == "trained"
     train_main(common + ["--epochs", "2", "--resume"])
     log_lines = (out / "tiny_log.csv").read_text().strip().splitlines()
     assert [line.split(",")[0] for line in log_lines] == ["epoch", "1", "2"]
+    assert log_lines[0] == "epoch,train_loss,val_loss,val_mae,val_rmse,lr,seconds"
+    assert all(len(line.split(",")) == 7 for line in log_lines)
+
+    custom_log = tmp_path / "logs" / "train_log.csv"  # --log puts the CSV anywhere (results\ for Phase 5)
+    train_main(common + ["--epochs", "1", "--name", "other", "--log", str(custom_log)])
+    assert custom_log.read_text().startswith("epoch,train_loss,val_loss")
 
     results = tmp_path / "results"
     evaluate_main(["--weights", str(out / "tiny_best.pth"), "--data", str(processed), "--device", "cpu",

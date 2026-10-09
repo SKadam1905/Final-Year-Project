@@ -13,24 +13,42 @@ def fresh_settings():
 
 
 def test_alternative_env_names(monkeypatch, fresh_settings):
-    for name in ("CSRNET_WEIGHTS", "ALERT_SMS_TO", "ALERT_COOLDOWN_S", "RISK_RED"):
+    for name in ("CSRNET_WEIGHTS", "MONGODB_URI", "ALERT_COOLDOWN_S", "RISK_RED"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MODEL_PATH", "backend/ml/weights/other.pth")
-    monkeypatch.setenv("SECURITY_PHONE_NUMBERS", "+911111111111, +912222222222")
+    monkeypatch.setenv("MONGO_URI", "mongodb+srv://user:pw@cluster0.example.mongodb.net/")
     monkeypatch.setenv("ALERT_COOLDOWN_SECONDS", "120")
     monkeypatch.setenv("THRESHOLD_RED", "7.5")
     s = fresh_settings()
     assert s.csrnet_weights == REPO_ROOT / "backend/ml/weights/other.pth"
-    assert s.alert_sms_to == ("+911111111111", "+912222222222")
+    assert s.mongodb_uri == "mongodb+srv://user:pw@cluster0.example.mongodb.net/"
     assert (s.alert_cooldown_s, s.risk_red) == (120.0, 7.5)
 
 
 def test_alert_channel_list_and_flags(monkeypatch, fresh_settings):
-    monkeypatch.setenv("ALERT_CHANNEL", "SMS, Telegram")
+    monkeypatch.setenv("ALERT_CHANNEL", "Console, Telegram")
     monkeypatch.setenv("CSRNET_ALLOW_PICKLE", "true")
     monkeypatch.setenv("FRAME_SOURCE", "LOCAL")
+    monkeypatch.setenv("FLOW_MAX_WIDTH", "480")
     s = fresh_settings()
-    assert s.alert_channels == ("sms", "telegram") and s.csrnet_allow_pickle and s.frame_source == "local"
+    assert s.alert_channels == ("console", "telegram") and s.csrnet_allow_pickle and s.frame_source == "local"
+    assert s.flow_max_width == 480
+
+
+def test_frames_are_read_locally_by_default_so_no_docker_is_needed(monkeypatch, fresh_settings):
+    monkeypatch.delenv("FRAME_SOURCE", raising=False)
+    assert fresh_settings().frame_source == "local"
+
+
+def test_flow_width_defaults_to_320(monkeypatch, fresh_settings):
+    monkeypatch.delenv("FLOW_MAX_WIDTH", raising=False)
+    assert fresh_settings().flow_max_width == 320
+
+
+def test_no_mongodb_uri_means_in_memory_storage(monkeypatch, fresh_settings):
+    for name in ("MONGODB_URI", "MONGO_URI", "MONGODB_URL", "MONGODB_DB"):
+        monkeypatch.delenv(name, raising=False)
+    assert (fresh_settings().mongodb_uri, fresh_settings().mongodb_db) == ("", "kumbhmela")
 
 
 def write_zones(tmp_path, zones):

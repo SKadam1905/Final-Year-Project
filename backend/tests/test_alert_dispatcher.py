@@ -1,5 +1,4 @@
 from dataclasses import replace
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -9,7 +8,6 @@ from app.alert_dispatcher import (
     AlertPolicy,
     Delivery,
     TelegramChannel,
-    TwilioSmsChannel,
     build_channels,
     format_alert,
 )
@@ -61,16 +59,16 @@ def test_dispatcher_sends_once_per_cooldown():
     assert len(channel.sent) == 2
 
 
-def test_failed_delivery_is_retried_next_reading():
+def test_failed_delivery_is_reported_not_repeated_every_reading():
     channel = FakeChannel(ok=False)
     dispatcher = AlertDispatcher([channel])
-    assert not dispatcher.handle(status(ORANGE, 0), "Ghat").deliveries[0].ok
-    channel.ok = True
-    assert dispatcher.handle(status(ORANGE, 2), "Ghat").deliveries[0].ok
-    assert dispatcher.handle(status(ORANGE, 4), "Ghat") is None
+    event = dispatcher.handle(status(ORANGE, 0), "Ghat")
+    assert event.deliveries[0].error == "down"
+    assert dispatcher.handle(status(ORANGE, 2), "Ghat") is None  # cooldown applies anyway
+    assert dispatcher.handle(status(RED, 4), "Ghat").level is RED  # escalation still fires
 
 
-def test_alert_text_fits_one_sms_segment():
+def test_alert_text_is_short_plain_ascii():
     text = format_alert(status(RED, 1_791_000_000.0), "Ramkund main ghat steps")
     assert text.startswith("RED: Ramkund main ghat steps")
     assert text.isascii() and len(text) <= 160
@@ -80,35 +78,32 @@ def test_message_contains_zone_risk_and_exit_route():
     route = ["RAMKUND_NORTH", "GHAT_1", "EXIT_GATE_C"]
     text = format_alert(status(ORANGE, 1_791_000_000.0), "Ramkund north steps", route)
     assert "Ramkund north steps" in text and text.startswith("ORANGE")
-    assert "Exit via GHAT_1>EXIT_GATE_C." in text
+    assert "Exit via Ghat 1 > Gate C." in text
     assert text.isascii() and len(text) <= 160
 
 
 def test_dispatcher_puts_route_in_event():
     event = AlertDispatcher([FakeChannel()]).handle(status(RED, 2), "Ghat", ["Z", "EXIT_GATE_A"])
-    assert event.route == ("Z", "EXIT_GATE_A") and "Exit via EXIT_GATE_A." in event.text
+    assert event.route == ("Z", "EXIT_GATE_A") and "Exit via Gate A." in event.text
 
 
-def channel_settings(channels, twilio=False, telegram=False):
-    return replace(
-        get_settings(), alert_channels=channels,
-        twilio_account_sid="AC123" if twilio else "", twilio_auth_token="token" if twilio else "",
-        twilio_from_number="+15550001111" if twilio else "", alert_sms_to=("+919999999999",) if twilio else (),
-        telegram_bot_token="123:abc" if telegram else "", telegram_chat_id="42" if telegram else "",
-    )
+def channel_settings(channels, telegram=False):
+    return replace(get_settings(), alert_channels=channels, telegram_bot_token="123:abc" if telegram else "",
+                   telegram_chat_id="42" if telegram else "")
 
 
 def test_build_channels_follows_alert_channel():
     assert [c.name for c in build_channels(channel_settings(("console",)))] == ["console"]
-    assert [c.name for c in build_channels(channel_settings(("twilio",), twilio=True))] == ["sms"]
-    assert [c.name for c in build_channels(channel_settings(("all",), twilio=True, telegram=True))] == \
-        ["console", "sms", "telegram"]
+    assert [c.name for c in build_channels(channel_settings(("TELEGRAM",), telegram=True))] == ["telegram"]
+    assert [c.name for c in build_channels(channel_settings(("all",), telegram=True))] == ["console", "telegram"]
     assert [c.name for c in build_channels(channel_settings(("console",)), ["telegram"])] == []  # no credentials
 
 
 def test_build_channels_rejects_unknown_names():
     with pytest.raises(ValueError, match="pager"):
         build_channels(channel_settings(("pager",)))
+    with pytest.raises(ValueError, match="Twilio was removed"):
+        build_channels(channel_settings(("sms",)))
 
 
 def test_telegram_success_and_token_redaction():
@@ -132,20 +127,3 @@ def test_telegram_success_and_token_redaction():
 
     bad = TelegramChannel(token, "42", client=httpx.Client(transport=httpx.MockTransport(rejected))).send("hi")
     assert bad[0].error == "Bad Request: chat not found"
-
-
-def test_twilio_channel_sends_to_each_number():
-    calls = []
-
-    def create(body, from_, to):
-        if to == "+910000000000":
-            raise RuntimeError("unverified number")
-        calls.append((body, from_, to))
-        return SimpleNamespace(sid="SM123")
-
-    client = SimpleNamespace(messages=SimpleNamespace(create=create))
-    channel = TwilioSmsChannel("sid", "token", "+15550001111", ["+919999999999", "+910000000000"], client=client)
-    first, second = channel.send("alert")
-    assert calls == [("alert", "+15550001111", "+919999999999")]
-    assert first.ok and first.provider_id == "SM123"
-    assert not second.ok and "unverified" in second.error

@@ -171,6 +171,10 @@ class ZoneStatus:
     smoothed_pressure: float
     level: RiskLevel
     samples: int
+    count_method: str = "density"  # which model gave `count`: "density" (CSRNet) or "detection" (YOLO)
+    density_count: float | None = None  # CSRNet's count
+    detection_count: int | None = None  # YOLO's count (None without a detector)
+    hotspot: dict | None = None  # the most crowded grid cell: row, col, label, count, density
 
     def to_dict(self) -> dict:
         data = asdict(self)

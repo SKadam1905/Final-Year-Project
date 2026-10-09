@@ -1,28 +1,14 @@
 # Needs Docker Desktop (WSL 2) on Windows.
 #
-#   docker compose up -d                         # PostGIS, Redis, MediaMTX demo cameras
+#   docker compose up -d                         # Redis, MediaMTX demo cameras
 #   docker compose --profile app up -d --build   # ...plus the backend in a container (CPU only)
-#   docker compose ps                            # db and redis should be "healthy"
+#   docker compose ps                            # redis should be "healthy"
 #
-# For GPU inference run the backend natively instead (see README). The React frontend joins
-# in Phase 4.
+# The database is MongoDB Atlas (cloud): set MONGODB_URI in .env; there is no database container.
+#
+# For GPU inference run the backend natively instead (see README). The React dashboard runs
+# with `npm run dev` in frontend/ (see README).
 services:
-  db:
-    image: postgis/postgis:16-3.4
-    environment:
-      POSTGRES_USER: kumbh
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kumbh_dev_password}
-      POSTGRES_DB: kumbhmela
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kumbh -d kumbhmela"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   redis:
     image: redis:7.2-alpine
     command: redis-server --save "" --appendonly no   # frames are transient: no persistence
@@ -50,7 +36,6 @@ services:
     build: ./backend
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+psycopg2://kumbh:${POSTGRES_PASSWORD:-kumbh_dev_password}@db:5432/kumbhmela
       REDIS_URL: redis://redis:6379/0
       FRAME_SOURCE: redis   # frames come from `python -m app.camera_manager` on the host
       DEVICE: cpu
@@ -60,10 +45,5 @@ services:
       - ./config:/repo/config:ro
       - ./backend/ml/weights:/repo/backend/ml/weights:ro
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
-
-volumes:
-  pgdata:

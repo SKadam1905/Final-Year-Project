@@ -1,0 +1,4 @@
+model,frames,median_ms,p95_ms,mean_count_kumbh_aerial_news9,mean_count_prayagraj_ghat_pti,mean_count_prayagraj_sangam_pti,est_cycle_s_3_zones,fits_2s
+CSRNet (csrnet_partA_public.pth),120,101.8,104.1,122.0,91.3,96.3,,
+yolov8s (imgsz 1280),120,57.1,59.4,0.2,21.6,16.3,0.48,True
+yolov8m (imgsz 1280),120,141.0,142.9,0.1,16.1,10.5,0.73,True

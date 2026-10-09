@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
@@ -19,7 +20,7 @@ load_dotenv(REPO_ROOT / ".env")
 # Alternative names accepted for some variables (other guides for this project use them).
 ALIASES = {
     "CSRNET_WEIGHTS": ("MODEL_PATH",),
-    "ALERT_SMS_TO": ("SECURITY_PHONE_NUMBERS",),
+    "MONGODB_URI": ("MONGO_URI", "MONGODB_URL"),
     "ALERT_COOLDOWN_S": ("ALERT_COOLDOWN_SECONDS",),
     "ROLLING_MAXLEN": ("ROLLING_WINDOW",),
     "RISK_YELLOW": ("THRESHOLD_YELLOW",),
@@ -53,13 +54,17 @@ def repo_path(value: str | Path) -> Path:
 @dataclass(frozen=True)
 class Settings:
     redis_url: str
-    database_url: str
+    mongodb_uri: str  # MongoDB Atlas connection string; empty = keep data in memory
+    mongodb_db: str
     zones_config: Path
     csrnet_weights: Path
     csrnet_allow_pickle: bool
+    demo_mode: bool  # DEMO_MODE=1: also load demo / provenance-less weights (their counts are not real)
     device: str
     infer_max_width: int
-    frame_source: str  # "redis" (pushed by app.camera_manager) or "local" (read in-process)
+    flow_max_width: int  # optical flow runs at this width (results/flow_speed_vs_accuracy.md)
+    turbulence_weighting: str  # "frame" (every moving pixel) or "density" (weighted by the CSRNet density map)
+    frame_source: str  # "local" (read in-process, no Docker) or "redis" (pushed by app.camera_manager)
     burst_size: int
     burst_interval_s: float
     rolling_window_s: float
@@ -70,28 +75,35 @@ class Settings:
     risk_red: float
     alert_channels: tuple[str, ...]
     alert_cooldown_s: float
-    twilio_account_sid: str
-    twilio_auth_token: str
-    twilio_from_number: str
-    alert_sms_to: tuple[str, ...]
     telegram_bot_token: str
     telegram_chat_id: str
     cors_origins: tuple[str, ...]
+    upload_dir: Path  # uploaded videos and their analysis results (git-ignored)
+    video_max_mb: int
+    yolo_weights: Path | None = None  # YOLOv8 person detector; None = off (CSRNet counts only)
+    yolo_imgsz: int = 640
+    yolo_conf: float = 0.25
+    hybrid_threshold: float = 60.0  # below this many people the detector's count is used
+    hybrid_rule: str = "agree"  # "agree": both models below the threshold; "detector": YOLO alone decides
+    grid_rows: int = 3  # zone-wise segmentation of each camera view
+    grid_cols: int = 3
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings(
         redis_url=_env("REDIS_URL", "redis://localhost:6379/0"),
-        database_url=_env(
-            "DATABASE_URL", "postgresql+psycopg2://kumbh:kumbh_dev_password@localhost:5432/kumbhmela"
-        ),
+        mongodb_uri=_env("MONGODB_URI", ""),
+        mongodb_db=_env("MONGODB_DB", "kumbhmela"),
         zones_config=repo_path(_env("ZONES_CONFIG", "config/zones.json")),
         csrnet_weights=repo_path(_env("CSRNET_WEIGHTS", "backend/ml/weights/csrnet_best.pth")),
         csrnet_allow_pickle=_env_bool("CSRNET_ALLOW_PICKLE"),
+        demo_mode=_env_bool("DEMO_MODE"),
         device=_env("DEVICE", "auto"),
         infer_max_width=int(_env("INFER_MAX_WIDTH", "1280")),
-        frame_source=_env("FRAME_SOURCE", "redis").lower(),
+        flow_max_width=int(_env("FLOW_MAX_WIDTH", "320")),
+        turbulence_weighting=_env("TURBULENCE_WEIGHTING", "frame").lower(),
+        frame_source=_env("FRAME_SOURCE", "local").lower(),  # redis needs Docker (Redis + camera manager)
         burst_size=int(_env("BURST_SIZE", "5")),
         burst_interval_s=float(_env("BURST_INTERVAL_S", "2")),
         rolling_window_s=float(_env("ROLLING_WINDOW_S", "30")),
@@ -102,14 +114,34 @@ def get_settings() -> Settings:
         risk_red=float(_env("RISK_RED", "6.0")),
         alert_channels=tuple(c.lower() for c in _env_list("ALERT_CHANNEL", "console")),
         alert_cooldown_s=float(_env("ALERT_COOLDOWN_S", "600")),
-        twilio_account_sid=_env("TWILIO_ACCOUNT_SID", ""),
-        twilio_auth_token=_env("TWILIO_AUTH_TOKEN", ""),
-        twilio_from_number=_env("TWILIO_FROM_NUMBER", ""),
-        alert_sms_to=_env_list("ALERT_SMS_TO"),
         telegram_bot_token=_env("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=_env("TELEGRAM_CHAT_ID", ""),
         cors_origins=_env_list("CORS_ORIGINS", "*"),
+        upload_dir=repo_path(_env("UPLOAD_DIR", "data/uploads")),
+        video_max_mb=int(_env("VIDEO_MAX_MB", "500")),
+        yolo_weights=_optional_path(_env("YOLO_WEIGHTS", "backend/ml/weights/yolo/yolov8s.pt")),
+        yolo_imgsz=int(_env("YOLO_IMGSZ", "640")),
+        yolo_conf=float(_env("YOLO_CONF", "0.25")),
+        hybrid_threshold=float(_env("HYBRID_THRESHOLD", "60")),
+        hybrid_rule=_env("HYBRID_RULE", "agree").lower(),
+        grid_rows=int(_env("GRID_ROWS", "3")),
+        grid_cols=int(_env("GRID_COLS", "3")),
     )
+
+
+def _optional_path(value: str) -> Path | None:
+    return None if value.lower() in ("off", "none", "0", "false") else repo_path(value)
+
+
+def redact(source: str) -> str:
+    """Hide credentials in camera URLs such as rtsp://user:pass@host/stream."""
+    parts = urlsplit(source)
+    if parts.username is None and parts.password is None:
+        return source
+    host = parts.hostname or ""
+    if parts.port:
+        host += f":{parts.port}"
+    return urlunsplit((parts.scheme, f"***@{host}", parts.path, parts.query, parts.fragment))
 
 
 Point = tuple[float, float]
@@ -134,6 +166,7 @@ class ZoneConfig:
     area_m2: float | None = None  # ground area of the ROI when there is no calibration
     calibration: Calibration | None = None
     graph_node: str | None = None  # node in the exit-routing graph (default: the zone id)
+    fixed_camera: bool = False  # true: never remove "camera motion" (a pole-mounted CCTV camera)
 
 
 def _points(raw) -> tuple[Point, ...] | None:
@@ -160,6 +193,7 @@ def load_zones(path: str | Path) -> list[ZoneConfig]:
             if cal
             else None,
             graph_node=raw.get("graph_node"),
+            fixed_camera=bool(raw.get("fixed_camera", False)),
         )
         if zone.area_m2 is None and zone.calibration is None:
             raise ValueError(

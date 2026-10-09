@@ -1,42 +1,55 @@
-"""Storage for readings, incidents and alerts: PostgreSQL (SqlStore) or in memory.
+"""Storage for readings, incidents and alerts: MongoDB Atlas (MongoStore) or in memory.
 
 An incident is a continuous stretch of ORANGE/RED readings for one zone: it opens on the
 first such reading, tracks peak values, and closes when the zone drops below ORANGE.
-MemoryStore keeps the same data in RAM so the system runs before Docker/PostGIS is set up
-(nothing survives a restart).
+MemoryStore keeps the same data in RAM so the system runs without a database (nothing
+survives a restart).
+
+Alerts are returned as one event per alert, with its deliveries (one per channel and
+recipient) nested inside: the same dict the worker emits as the Socket.IO "alert" event.
+
+MongoDB collections (database MONGODB_DB):
+    zones           _id = zone id; name, camera_source (credentials hidden), area_m2, graph_node
+    zone_readings   zone_id, ts, pressure (30 s mean), raw_pressure, density, turbulence, count, risk_level
+    incidents       zone_id, started_at, ended_at (null while open), peak_level/pressure/density/count
+    alerts          zone_id, incident_id, risk_level, message, triggered_at, delivered,
+                    deliveries [{channel, recipient, delivered, latency_ms, provider_id, error}]
 """
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import logging
+import queue
+import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol, Sequence
+from typing import Callable, Protocol, Sequence
 
-from sqlalchemy import create_engine, inspect, select
-from sqlalchemy.orm import Session, sessionmaker
-
-from app.alert_dispatcher import AlertEvent
-from app.config import ZoneConfig
-from app.models import AlertLog, Incident, Zone, ZoneReading
+from app.alert_dispatcher import AlertEvent, Delivery
+from app.config import ZoneConfig, redact
 from app.risk_engine import RiskLevel, ZoneStatus
 
 log = logging.getLogger(__name__)
-
-TABLES = {"zones", "zone_readings", "incidents", "alert_logs"}
 
 
 def to_datetime(ts: float) -> datetime:
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
+def _utc(value: datetime) -> datetime:
+    """Datetimes from the database are UTC; a naive one must not be read as local time."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def _iso(value: datetime | float | None) -> str | None:
-    """ISO 8601 in UTC, whatever time zone the database session uses."""
+    """ISO 8601 in UTC."""
     if value is None:
         return None
-    return (to_datetime(value) if isinstance(value, (int, float)) else value.astimezone(timezone.utc)).isoformat()
+    return (to_datetime(value) if isinstance(value, (int, float)) else _utc(value)).isoformat()
 
 
 class Store(Protocol):
@@ -44,16 +57,25 @@ class Store(Protocol):
 
     def sync_zones(self, zones: Sequence[ZoneConfig]) -> None: ...
     def record_reading(self, status: ZoneStatus) -> None: ...
-    def record_alert(self, event: AlertEvent) -> None: ...
+    def record_alert(self, event: AlertEvent) -> dict: ...
     def recent_alerts(self, limit: int = 20) -> list[dict]: ...
     def recent_incidents(self, limit: int = 50) -> list[dict]: ...
+    def history(self, zone_id: str, limit: int = 150) -> list[dict]: ...
+    def alert_history(self, zone_id: str | None = None, levels: Sequence[str] = (), since: float | None = None,
+                      until: float | None = None, limit: int = 500) -> list[dict]: ...
+    def incident_history(self, zone_id: str | None = None, levels: Sequence[str] = (), since: float | None = None,
+                         until: float | None = None, limit: int = 500) -> list[dict]: ...
+    def readings_between(self, since: float | None = None, until: float | None = None,
+                         zone_id: str | None = None, limit: int = 50_000) -> list[dict]: ...
+    def flush(self) -> None: ...
+    def close(self) -> None: ...
 
 
 @dataclass
 class _Incident:
-    """In-memory twin of the Incident table row."""
+    """An incident while it is open (both stores keep the open ones in memory)."""
 
-    id: int
+    id: int | str
     zone_id: str
     started_at: float
     ended_at: float | None
@@ -63,14 +85,14 @@ class _Incident:
     peak_count: float
 
 
-def update_peaks(incident: _Incident | Incident, status: ZoneStatus) -> None:
+def update_peaks(incident: _Incident, status: ZoneStatus) -> None:
     incident.peak_level = max(incident.peak_level, status.level)
     incident.peak_pressure = max(incident.peak_pressure, status.smoothed_pressure)
     incident.peak_density = max(incident.peak_density, status.density)
     incident.peak_count = max(incident.peak_count, status.count)
 
 
-def incident_dict(incident: _Incident | Incident) -> dict:
+def incident_dict(incident: _Incident) -> dict:
     return {
         "id": incident.id, "zone_id": incident.zone_id, "started_at": _iso(incident.started_at),
         "ended_at": _iso(incident.ended_at), "peak_level": str(incident.peak_level),
@@ -79,24 +101,53 @@ def incident_dict(incident: _Incident | Incident) -> dict:
     }
 
 
-def alert_dicts(event: AlertEvent, incident_id: int | None) -> list[dict]:
-    """One row per delivery attempt (a channel/recipient pair)."""
-    return [{
-        "zone_id": event.zone_id, "incident_id": incident_id, "timestamp": _iso(event.triggered_at),
-        "risk_level": str(event.level), "message": event.text, "channel": d.channel, "recipient": d.recipient,
-        "delivered": d.ok, "latency_ms": d.latency_ms, "provider_id": d.provider_id, "error": d.error,
-    } for d in event.deliveries]
+def _in_range(ts: float, since: float | None, until: float | None) -> bool:
+    return (since is None or ts >= since) and (until is None or ts <= until)
+
+
+def _overlaps(incident: _Incident, since: float | None, until: float | None) -> bool:
+    """An incident counts for a time range if any part of it falls inside."""
+    started_in_time = until is None or incident.started_at <= until
+    still_on = incident.ended_at is None or since is None or incident.ended_at >= since
+    return started_in_time and still_on
+
+
+def delivery_dict(d: Delivery) -> dict:
+    return {"channel": d.channel, "recipient": d.recipient, "delivered": d.ok, "latency_ms": d.latency_ms,
+            "provider_id": d.provider_id, "error": d.error}
+
+
+def alert_dict(alert_id: int | str | None, event: AlertEvent, incident_id: int | str | None) -> dict:
+    """An alert as served by GET /api/alerts/recent and emitted as the "alert" event."""
+    deliveries = [delivery_dict(d) for d in event.deliveries]
+    return {
+        "id": alert_id, "zone_id": event.zone_id, "risk_level": str(event.level), "message": event.text,
+        "timestamp": event.triggered_at, "incident_id": incident_id,
+        "delivered": any(d["delivered"] for d in deliveries), "deliveries": deliveries,
+    }
+
+
+def reading_dict(timestamp: float, status: ZoneStatus) -> dict:
+    """One point of a zone's history; field names match the "density_update" event."""
+    return {
+        "timestamp": timestamp, "pressure": status.smoothed_pressure, "raw_pressure": status.pressure,
+        "density": status.density, "turbulence": status.turbulence, "count": status.count,
+        "risk_level": str(status.level), "count_method": status.count_method,
+        "density_count": status.density_count, "detection_count": status.detection_count,
+        "hotspot": status.hotspot,
+    }
 
 
 class MemoryStore:
     kind = "memory"
 
-    def __init__(self, max_items: int = 1000) -> None:
+    def __init__(self, max_items: int = 1000, max_readings: int = 5000) -> None:
         self._incidents: deque[_Incident] = deque(maxlen=max_items)
         self._open: dict[str, _Incident] = {}
         self._alerts: deque[dict] = deque(maxlen=max_items)
-        self._ids = itertools.count(1)
-        self.readings: deque[ZoneStatus] = deque(maxlen=max_items)
+        self._incident_ids = itertools.count(1)
+        self._alert_ids = itertools.count(1)
+        self.readings: deque[ZoneStatus] = deque(maxlen=max_readings)
 
     def sync_zones(self, zones: Sequence[ZoneConfig]) -> None:
         pass
@@ -106,7 +157,7 @@ class MemoryStore:
         incident = self._open.get(status.zone_id)
         if status.level >= RiskLevel.ORANGE:
             if incident is None:
-                incident = _Incident(next(self._ids), status.zone_id, status.timestamp, None, status.level,
+                incident = _Incident(next(self._incident_ids), status.zone_id, status.timestamp, None, status.level,
                                      status.smoothed_pressure, status.density, status.count)
                 self._open[status.zone_id] = incident
                 self._incidents.append(incident)
@@ -116,9 +167,11 @@ class MemoryStore:
             incident.ended_at = status.timestamp
             del self._open[status.zone_id]
 
-    def record_alert(self, event: AlertEvent) -> None:
+    def record_alert(self, event: AlertEvent) -> dict:
         incident = self._open.get(event.zone_id)
-        self._alerts.extend(alert_dicts(event, incident.id if incident else None))
+        alert = alert_dict(next(self._alert_ids), event, incident.id if incident else None)
+        self._alerts.append(alert)
+        return alert
 
     def recent_alerts(self, limit: int = 20) -> list[dict]:
         return list(reversed(self._alerts))[:limit]
@@ -127,82 +180,245 @@ class MemoryStore:
         newest = sorted(self._incidents, key=lambda i: i.started_at, reverse=True)[:limit]
         return [incident_dict(i) for i in newest]
 
+    def history(self, zone_id: str, limit: int = 150) -> list[dict]:
+        readings = [r for r in self.readings if r.zone_id == zone_id][-limit:]
+        return [reading_dict(r.timestamp, r) for r in readings]
 
-class SqlStore:
-    """PostgreSQL + PostGIS through the models in app.models (create the tables with Alembic)."""
+    def alert_history(self, zone_id=None, levels=(), since=None, until=None, limit=500) -> list[dict]:
+        """Alerts matching the filters, newest first."""
+        found = [a for a in reversed(self._alerts) if (zone_id is None or a["zone_id"] == zone_id)
+                 and (not levels or a["risk_level"] in levels) and _in_range(a["timestamp"], since, until)]
+        return found[:limit]
 
-    kind = "postgres"
+    def incident_history(self, zone_id=None, levels=(), since=None, until=None, limit=500) -> list[dict]:
+        """ORANGE/RED periods overlapping the time range, newest first."""
+        found = [i for i in sorted(self._incidents, key=lambda i: i.started_at, reverse=True)
+                 if (zone_id is None or i.zone_id == zone_id) and (not levels or str(i.peak_level) in levels)
+                 and _overlaps(i, since, until)]
+        return [incident_dict(i) for i in found[:limit]]
 
-    def __init__(self, database_url: str) -> None:
-        connect_args = {"connect_timeout": 3} if database_url.startswith("postgresql") else {}
-        self.engine = create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
-        missing = TABLES - set(inspect(self.engine).get_table_names())
-        if missing:
-            raise RuntimeError(f"tables missing ({', '.join(sorted(missing))}); run `alembic upgrade head` in backend/")
-        self._sessions = sessionmaker(self.engine, expire_on_commit=False)
+    def readings_between(self, since=None, until=None, zone_id=None, limit=50_000) -> list[dict]:
+        """Readings in the time range, oldest first, each with its zone_id (only those still kept in memory)."""
+        found = [r for r in self.readings if (zone_id is None or r.zone_id == zone_id)
+                 and _in_range(r.timestamp, since, until)]
+        return [{"zone_id": r.zone_id, **reading_dict(r.timestamp, r)} for r in found[-limit:]]
 
-    def sync_zones(self, zones: Sequence[ZoneConfig]) -> None:
-        with self._sessions.begin() as s:
-            for z in zones:
-                s.merge(Zone(id=z.id, name=z.name, camera_source=z.source, area_m2=z.area_m2))
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class MongoStore:
+    """MongoDB (Atlas or local) through pymongo.
+
+    Writes never block the inference loop: record_reading and record_alert queue them for one
+    background thread and return at once, so a slow or dropped Wi-Fi link to Atlas delays the
+    database, not the dashboard. Writes are applied in order. While Atlas is unreachable a
+    write is retried every `retry_s` (it has a client-made _id, so a retry never duplicates
+    it); one the server rejects (e.g. storage quota full) is logged and dropped. Open
+    incidents are tracked in memory (loaded at start-up), so an alert gets its incident id
+    without a database round trip. Reads (history, recent alerts/incidents) query the
+    database directly.
+    """
+
+    kind = "mongodb"
+
+    def __init__(self, uri: str, db_name: str, client=None, timeout_ms: int = 5000, retry_s: float = 2.0,
+                 max_queued: int = 50_000) -> None:
+        from bson import ObjectId
+        from pymongo import ASCENDING, DESCENDING, MongoClient
+
+        self._object_id = ObjectId
+        self.client = client or MongoClient(uri, tz_aware=True, appname="kumbh-crowd-safety",
+                                            serverSelectionTimeoutMS=timeout_ms, connectTimeoutMS=timeout_ms,
+                                            socketTimeoutMS=2 * timeout_ms)
+        self.db = self.client[db_name]
+        self.client.admin.command("ping")  # unreachable or wrong password: fail now, open_store falls back
+        self.db.zone_readings.create_index([("zone_id", ASCENDING), ("ts", DESCENDING)])
+        self.db.incidents.create_index([("zone_id", ASCENDING), ("ended_at", ASCENDING)])
+        self.db.incidents.create_index([("started_at", DESCENDING)])
+        self.db.alerts.create_index([("triggered_at", DESCENDING)])
+        self._open = {doc["zone_id"]: self._incident(doc) for doc in self.db.incidents.find({"ended_at": None})}
+
+        self.retry_s = retry_s
+        self._queue: queue.Queue[Callable[[], object] | None] = queue.Queue(max_queued)
+        self._unreachable = False
+        self._writer = threading.Thread(target=self._write_loop, name="mongo-writer", daemon=True)
+        self._writer.start()
 
     @staticmethod
-    def _open_incident(session: Session, zone_id: str) -> Incident | None:
-        query = (select(Incident).where(Incident.zone_id == zone_id, Incident.ended_at.is_(None))
-                 .order_by(Incident.started_at.desc()).limit(1))
-        return session.scalar(query)
+    def _incident(doc: dict) -> _Incident:
+        ended = doc.get("ended_at")
+        return _Incident(str(doc["_id"]), doc["zone_id"], _utc(doc["started_at"]).timestamp(),
+                         _utc(ended).timestamp() if ended else None, RiskLevel[doc["peak_level"]],
+                         doc["peak_pressure"], doc["peak_density"], doc["peak_count"])
+
+    # Writes -----------------------------------------------------------------------------
+
+    def _submit(self, write: Callable[[], object]) -> None:
+        try:
+            self._queue.put_nowait(write)
+        except queue.Full:
+            log.warning("MongoDB write queue full (%d); dropping a write", self._queue.maxsize)
+
+    def _write_loop(self) -> None:
+        from pymongo.errors import ConnectionFailure, DuplicateKeyError, PyMongoError
+
+        while (write := self._queue.get()) is not None:
+            while True:
+                try:
+                    write()
+                    if self._unreachable:
+                        log.warning("MongoDB reachable again; %d writes queued", self._queue.qsize())
+                        self._unreachable = False
+                    break
+                except DuplicateKeyError:  # a retried insert that had already landed
+                    break
+                except ConnectionFailure as exc:  # network down, Atlas paused, timeout: keep and retry
+                    if not self._unreachable:
+                        log.warning("MongoDB unreachable (%s); retrying every %.0f s", exc, self.retry_s)
+                        self._unreachable = True
+                    time.sleep(self.retry_s)
+                except PyMongoError as exc:  # rejected by the server, e.g. storage quota full
+                    log.warning("MongoDB rejected a write, dropped: %s", exc)
+                    break
+            self._queue.task_done()
+        self._queue.task_done()
+
+    def sync_zones(self, zones: Sequence[ZoneConfig]) -> None:
+        for z in zones:
+            self.db.zones.replace_one({"_id": z.id}, {
+                "name": z.name, "camera_source": redact(z.source), "area_m2": z.area_m2,
+                "calibrated": z.calibration is not None, "graph_node": z.graph_node,
+            }, upsert=True)
 
     def record_reading(self, status: ZoneStatus) -> None:
-        ts = to_datetime(status.timestamp)
-        with self._sessions.begin() as s:
-            s.add(ZoneReading(zone_id=status.zone_id, ts=ts, count=status.count, density=status.density,
-                              turbulence=status.turbulence, pressure=status.pressure,
-                              smoothed_pressure=status.smoothed_pressure, level=status.level))
-            incident = self._open_incident(s, status.zone_id)
-            if status.level >= RiskLevel.ORANGE:
-                if incident is None:
-                    s.add(Incident(zone_id=status.zone_id, started_at=ts, peak_level=status.level,
-                                   peak_pressure=status.smoothed_pressure, peak_density=status.density,
-                                   peak_count=status.count))
-                else:
-                    update_peaks(incident, status)
-            elif incident is not None:
-                incident.ended_at = ts
+        doc = {"_id": self._object_id(), "zone_id": status.zone_id, "ts": to_datetime(status.timestamp),
+               **reading_dict(status.timestamp, status)}
+        del doc["timestamp"]
+        self._submit(lambda: self.db.zone_readings.insert_one(doc))
 
-    def record_alert(self, event: AlertEvent) -> None:
-        now = datetime.now(timezone.utc)
-        with self._sessions.begin() as s:
-            incident = self._open_incident(s, event.zone_id)
-            for d in event.deliveries:
-                s.add(AlertLog(zone_id=event.zone_id, incident_id=incident.id if incident else None,
-                               level=event.level, channel=d.channel, recipient=d.recipient,
-                               status="sent" if d.ok else "failed", message=event.text,
-                               triggered_at=to_datetime(event.triggered_at), sent_at=now if d.ok else None,
-                               latency_ms=d.latency_ms, provider_id=d.provider_id, error=d.error))
+        incident = self._open.get(status.zone_id)
+        if status.level >= RiskLevel.ORANGE:
+            if incident is None:
+                oid = self._object_id()
+                incident = _Incident(str(oid), status.zone_id, status.timestamp, None, status.level,
+                                     status.smoothed_pressure, status.density, status.count)
+                self._open[status.zone_id] = incident
+                new = {"_id": oid, "zone_id": status.zone_id, "started_at": to_datetime(status.timestamp),
+                       "ended_at": None, **self._peaks(incident)}
+                self._submit(lambda: self.db.incidents.insert_one(new))
+            else:
+                update_peaks(incident, status)
+                oid, peaks = self._object_id(incident.id), self._peaks(incident)
+                self._submit(lambda: self.db.incidents.update_one({"_id": oid}, {"$set": peaks}))
+        elif incident is not None:
+            del self._open[status.zone_id]
+            oid, ended = self._object_id(incident.id), to_datetime(status.timestamp)
+            self._submit(lambda: self.db.incidents.update_one({"_id": oid}, {"$set": {"ended_at": ended}}))
+
+    @staticmethod
+    def _peaks(incident: _Incident) -> dict:
+        return {"peak_level": str(incident.peak_level), "peak_pressure": incident.peak_pressure,
+                "peak_density": incident.peak_density, "peak_count": incident.peak_count}
+
+    def record_alert(self, event: AlertEvent) -> dict:
+        incident = self._open.get(event.zone_id)
+        oid = self._object_id()
+        alert = alert_dict(str(oid), event, incident.id if incident else None)
+        doc = {"_id": oid, "zone_id": event.zone_id,
+               "incident_id": self._object_id(incident.id) if incident else None,
+               "risk_level": alert["risk_level"], "message": event.text, "triggered_at": to_datetime(event.triggered_at),
+               "delivered": alert["delivered"], "deliveries": alert["deliveries"]}
+        self._submit(lambda: self.db.alerts.insert_one(doc))
+        return alert
+
+    def flush(self) -> None:
+        """Wait until every queued write has been applied (or dropped)."""
+        self._queue.join()
+
+    def close(self, timeout_s: float = 10.0) -> None:
+        """Finish queued writes (giving up after `timeout_s` if Atlas is unreachable), then disconnect."""
+        with contextlib.suppress(queue.Full):
+            self._queue.put(None, timeout=timeout_s)
+        self._writer.join(timeout_s)
+        if self._writer.is_alive():
+            log.warning("MongoDB: %d queued writes not saved before shutdown", self._queue.qsize())
+        self.client.close()
+
+    # Reads ------------------------------------------------------------------------------
+
+    @staticmethod
+    def _alert(d: dict) -> dict:
+        return {"id": str(d["_id"]), "zone_id": d["zone_id"], "risk_level": d["risk_level"], "message": d["message"],
+                "timestamp": _utc(d["triggered_at"]).timestamp(),
+                "incident_id": str(d["incident_id"]) if d.get("incident_id") else None,
+                "delivered": d["delivered"], "deliveries": d["deliveries"]}
+
+    @staticmethod
+    def _time_range(since: float | None, until: float | None) -> dict:
+        query = {}
+        if since is not None:
+            query["$gte"] = to_datetime(since)
+        if until is not None:
+            query["$lte"] = to_datetime(until)
+        return query
 
     def recent_alerts(self, limit: int = 20) -> list[dict]:
-        with self._sessions() as s:
-            rows = s.scalars(select(AlertLog).order_by(AlertLog.triggered_at.desc(), AlertLog.id.desc())
-                             .limit(limit)).all()
-            return [{
-                "zone_id": r.zone_id, "incident_id": r.incident_id, "timestamp": _iso(r.triggered_at),
-                "risk_level": str(r.level), "message": r.message, "channel": r.channel, "recipient": r.recipient,
-                "delivered": r.status == "sent", "latency_ms": r.latency_ms, "provider_id": r.provider_id,
-                "error": r.error,
-            } for r in rows]
+        docs = self.db.alerts.find().sort([("triggered_at", -1), ("_id", -1)]).limit(limit)
+        return [self._alert(d) for d in docs]
+
+    def alert_history(self, zone_id=None, levels=(), since=None, until=None, limit=500) -> list[dict]:
+        query: dict = {}
+        if zone_id:
+            query["zone_id"] = zone_id
+        if levels:
+            query["risk_level"] = {"$in": list(levels)}
+        if when := self._time_range(since, until):
+            query["triggered_at"] = when
+        docs = self.db.alerts.find(query).sort([("triggered_at", -1), ("_id", -1)]).limit(limit)
+        return [self._alert(d) for d in docs]
+
+    def incident_history(self, zone_id=None, levels=(), since=None, until=None, limit=500) -> list[dict]:
+        query: dict = {}
+        if zone_id:
+            query["zone_id"] = zone_id
+        if levels:
+            query["peak_level"] = {"$in": list(levels)}
+        if until is not None:
+            query["started_at"] = {"$lte": to_datetime(until)}
+        if since is not None:
+            query["$or"] = [{"ended_at": None}, {"ended_at": {"$gte": to_datetime(since)}}]
+        docs = self.db.incidents.find(query).sort([("started_at", -1), ("_id", -1)]).limit(limit)
+        return [incident_dict(self._incident(d)) for d in docs]
+
+    def readings_between(self, since=None, until=None, zone_id=None, limit=50_000) -> list[dict]:
+        query: dict = {}
+        if zone_id:
+            query["zone_id"] = zone_id
+        if when := self._time_range(since, until):
+            query["ts"] = when
+        docs = self.db.zone_readings.find(query, {"_id": 0}).sort([("ts", 1), ("_id", 1)]).limit(limit)
+        return [{"timestamp": _utc(d.pop("ts")).timestamp(), **d} for d in docs]
 
     def recent_incidents(self, limit: int = 50) -> list[dict]:
-        with self._sessions() as s:
-            rows = s.scalars(select(Incident).order_by(Incident.started_at.desc()).limit(limit)).all()
-            return [incident_dict(r) for r in rows]
+        docs = self.db.incidents.find().sort([("started_at", -1), ("_id", -1)]).limit(limit)
+        return [incident_dict(self._incident(d)) for d in docs]
+
+    def history(self, zone_id: str, limit: int = 150) -> list[dict]:
+        docs = list(self.db.zone_readings.find({"zone_id": zone_id}, {"_id": 0, "zone_id": 0})
+                    .sort([("ts", -1), ("_id", -1)]).limit(limit))
+        return [{"timestamp": _utc(d.pop("ts")).timestamp(), **d} for d in reversed(docs)]
 
 
-def open_store(database_url: str) -> Store:
-    """SqlStore if the database is reachable and migrated, otherwise MemoryStore (with a warning)."""
-    if not database_url:
+def open_store(mongodb_uri: str, db_name: str = "kumbhmela", timeout_ms: int = 5000) -> Store:
+    """MongoStore if the database answers, otherwise MemoryStore (with a warning)."""
+    if not mongodb_uri:
         return MemoryStore()
     try:
-        return SqlStore(database_url)
-    except Exception as exc:  # server down, missing tables, bad URL, missing driver
-        log.warning("database unavailable (%s); keeping readings, incidents and alerts in memory", exc)
+        return MongoStore(mongodb_uri, db_name, timeout_ms=timeout_ms)
+    except Exception as exc:  # unreachable, wrong password, IP not on the Atlas access list, bad URI
+        log.warning("MongoDB unavailable (%s); keeping readings, incidents and alerts in memory", exc)
         return MemoryStore()

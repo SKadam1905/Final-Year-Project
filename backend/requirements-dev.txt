@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest>=8
 fakeredis>=2.20
+mongomock>=4.3              # in-memory MongoDB for the store tests

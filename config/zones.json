@@ -2,35 +2,40 @@
   "_comment": [
     "One entry per camera view. id: also its node in the exit graph (app/exit_router.py) unless graph_node is set.",
     "source: rtsp:// URL or a video file path relative to the repo root. rtsp://localhost:8554/<name> is the clip",
-    "  data/india_dataset/raw_videos/<name>.mp4 replayed by MediaMTX (or read directly with FRAME_SOURCE=local).",
+    "  data/india_dataset/raw_videos/<name>.mp4: read directly with FRAME_SOURCE=local (default, no Docker) or",
+    "  replayed by MediaMTX with FRAME_SOURCE=redis. Clip sources are listed in data/india_dataset/sources.csv.",
     "roi: walkable-area polygon in camera pixels [[x, y], ...]; null = whole frame.",
     "Persons/m2 needs either area_m2 (rough ground area of the ROI) or calibration:",
     "  {\"image_points\": [[x, y] x4+], \"ground_points\": [[X_m, Y_m] x4+]} from measured floor markers (plan 4.5).",
-    "The clip names and area_m2 values below are placeholders until the clips are chosen and measured."
+    "fixed_camera: true for a camera that never moves (pole-mounted CCTV): its whole-frame motion is then never",
+    "  removed as 'camera motion', even when a dense procession fills the view. Default false (auto-detect).",
+    "The demo clips are 2025 Prayagraj Maha Kumbh news footage standing in for Nashik cameras. Their area_m2",
+    "  values are rough visual estimates, not measurements (3000 m2 is what was used for the aerial clip in the",
+    "  video analysis runs), so the persons/m2 and risk levels they give are illustrative only."
   ],
   "zones": [
     {
       "id": "RAMKUND_NORTH",
       "name": "Ramkund north steps",
-      "source": "rtsp://localhost:8554/pandharpur_01",
+      "source": "rtsp://localhost:8554/kumbh_aerial_news9",
       "roi": null,
-      "area_m2": 150.0,
+      "area_m2": 3000.0,
       "calibration": null
     },
     {
       "id": "RAMKUND_SOUTH",
       "name": "Ramkund south steps",
-      "source": "rtsp://localhost:8554/pandharpur_02",
+      "source": "rtsp://localhost:8554/prayagraj_ghat_pti",
       "roi": null,
-      "area_m2": 150.0,
+      "area_m2": 800.0,
       "calibration": null
     },
     {
       "id": "GHAT_1",
       "name": "Ghat 1 approach",
-      "source": "rtsp://localhost:8554/shirdi_01",
+      "source": "rtsp://localhost:8554/prayagraj_sangam_pti",
       "roi": null,
-      "area_m2": 200.0,
+      "area_m2": 1500.0,
       "calibration": null
     }
   ]
