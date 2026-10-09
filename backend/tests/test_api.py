@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.config import redact
 from app.main import create_app
-from tests.fakes import FakeSource, make_services, real_estimator
+from tests.fakes import FakeSource, auth_headers, make_services, real_estimator
 
 
 def client_for(services, run_loop=False):
@@ -17,7 +17,7 @@ def client_for(services, run_loop=False):
         emitted.append((event, data))
 
     app.sio.emit = record
-    return app, TestClient(app), emitted
+    return app, TestClient(app, headers=auth_headers(services.settings)), emitted
 
 
 def decode(response, flags=cv2.IMREAD_UNCHANGED):

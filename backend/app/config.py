@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -87,6 +88,10 @@ class Settings:
     hybrid_rule: str = "agree"  # "agree": both models below the threshold; "detector": YOLO alone decides
     grid_rows: int = 3  # zone-wise segmentation of each camera view
     grid_cols: int = 3
+    secret_key: str = ""  # signs session tokens (app.auth); from .env SECRET_KEY
+    secret_key_ephemeral: bool = False  # True: SECRET_KEY was missing, a random one is used until restart
+    users_config: Path = REPO_ROOT / "config" / "users.json"
+    session_hours: float = 8.0
 
 
 @lru_cache
@@ -126,6 +131,10 @@ def get_settings() -> Settings:
         hybrid_rule=_env("HYBRID_RULE", "agree").lower(),
         grid_rows=int(_env("GRID_ROWS", "3")),
         grid_cols=int(_env("GRID_COLS", "3")),
+        secret_key=_env("SECRET_KEY", "") or secrets.token_urlsafe(32),
+        secret_key_ephemeral=not _env("SECRET_KEY", ""),
+        users_config=repo_path(_env("USERS_CONFIG", "config/users.json")),
+        session_hours=float(_env("SESSION_HOURS", "8")),
     )
 
 

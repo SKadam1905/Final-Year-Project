@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.reports import summarise_readings
 from app.store import MemoryStore
-from tests.fakes import make_services
+from tests.fakes import auth_headers, make_services
 from tests.test_store import exercise, mongo_store
 
 
@@ -64,7 +64,7 @@ def test_report_endpoints():
     services.worker.estimator.count = 100  # 1 /m²: the 30 s mean stays high, still RED
     services.worker.step()
     app = create_app(services.settings, services_factory=lambda _: services, run_loop=False)
-    with TestClient(app) as client:
+    with TestClient(app, headers=auth_headers(services.settings)) as client:
         alerts = client.get("/api/reports/alerts", params={"level": "red"}).json()
         assert {a["zone_id"] for a in alerts} == {"RAMKUND_NORTH", "CAMERA_X"}
         assert client.get("/api/reports/alerts", params={"zone_id": "CAMERA_X"}).json()[0]["zone_id"] == "CAMERA_X"

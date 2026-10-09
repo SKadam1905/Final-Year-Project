@@ -17,7 +17,7 @@ from app.video_jobs import LiveGate, VideoService, VideoZoneRequest
 from app.visualize import density_rgba, density_scale
 from app.worker import WithUploadedVideos
 from tests.conftest import texture, write_video
-from tests.fakes import FakeEstimator, FakeSource, RecordingChannel, make_services
+from tests.fakes import FakeEstimator, FakeSource, RecordingChannel, auth_headers, make_services
 
 
 def numbered_video(path, fps, seconds, size=(64, 48)):
@@ -59,7 +59,7 @@ def client_for(services, channels=None):
                      video_factory=lambda settings, s, emit: VideoService(
                          settings, s, lambda name, payload: emitted.append((name, payload)), channel_factory=channels))
     emitted = []
-    return TestClient(app), emitted
+    return TestClient(app, headers=auth_headers(services.settings)), emitted
 
 
 def upload(client, path, name=None):

@@ -13,7 +13,7 @@ from app.csrnet_model import CSRNet
 from app.main import create_app
 from app.video_jobs import VideoService
 from app.worker import build_services
-from tests.fakes import make_services
+from tests.fakes import auth_headers, make_services
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +67,7 @@ def test_health_says_model_not_loaded_and_names_the_active_weights(tmp_path, wei
     for path, loaded in ((weights["demo"], False), (weights["public"], True)):
         settings = settings_for(tmp_path, path)
         app = create_app(settings, services_factory=build_services, run_loop=False)
-        with TestClient(app) as client:
+        with TestClient(app) as client:  # /health needs no login
             health = client.get("/health").json()
         assert health["model_loaded"] is loaded
         assert health["model_status"] == ("loaded" if loaded else "model not loaded")
@@ -80,7 +80,7 @@ def test_health_says_model_not_loaded_and_names_the_active_weights(tmp_path, wei
 def test_no_trained_model_means_no_live_readings(tmp_path, weights):
     services = build_services(settings_for(tmp_path, weights["demo"]))
     app = create_app(services.settings, services_factory=lambda _: services, run_loop=False)
-    with TestClient(app) as client:
+    with TestClient(app, headers=auth_headers(services.settings)) as client:
         assert client.get("/api/zones/Z/status").json()["risk_level"] == "UNKNOWN"  # no count, density or level
         assert client.post("/api/zones/Z/infer").status_code == 503
         options = client.get("/api/video/options").json()
@@ -105,7 +105,7 @@ def test_video_results_made_with_demo_weights_are_not_served_without_demo_mode(t
     for demo_mode, expected in ((True, 200), (False, 409)):
         settings = replace(services.settings, demo_mode=demo_mode)
         app = create_app(settings, services_factory=lambda _: replace(services, settings=settings), run_loop=False)
-        with TestClient(app) as client:
+        with TestClient(app, headers=auth_headers(settings)) as client:
             response = client.get(f"/api/jobs/{job.id}/results")
             assert response.status_code == expected
             if expected == 409:

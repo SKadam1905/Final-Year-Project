@@ -3,8 +3,12 @@
     cd backend
     uvicorn app.main:app --port 8000          # interactive docs: http://localhost:8000/docs
 
+Every /api/ route needs a session token (app/auth.py) except POST /api/auth/login; video, jobs, reports,
+removing a zone and /infer need the admin role. 401 = not logged in or expired, 403 = wrong role.
+
 REST
-    GET  /health                            status, model_loaded, zones, storage, frame source, cameras
+    POST /api/auth/login | /logout, GET /api/auth/me   session token for {username, password}; who is logged in
+    GET  /health                            status, model_loaded, zones, storage, frame source, cameras (public)
     GET  /api/config                        risk thresholds and timing (for the dashboard)
     GET  /api/zones                         zone configs (camera passwords hidden)
     GET  /api/zones/{zone_id}/status        latest reading
@@ -18,7 +22,7 @@ REST
     GET  /api/alerts/recent                 last 20 alerts, newest first
     GET  /api/incidents                     last 50 incidents (ORANGE/RED periods)
 Video analysis (upload, jobs, video zones): see app/video_api.py. Reports (filtered history, summaries): app/reports.py.
-Socket.IO (path /socket.io)
+Socket.IO (path /socket.io; connect with auth {token}, refused without a valid one)
     density_update  {zone_id, name, timestamp, server_time, density, turbulence, pressure, raw_pressure,
                      risk_level, count, samples, exits, count_method ("density" | "detection"),
                      density_count, detection_count, grid {rows, cols, counts, density, hotspot}, hotspot}
@@ -36,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -43,9 +48,12 @@ from contextlib import asynccontextmanager
 import cv2
 import numpy as np
 import socketio
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
+from app.auth import ROLES, Sessions, TokenError, UserStore, required_role, user_from_claims
 from app.config import Settings, ZoneConfig, get_settings, redact
 from app.reports import add_report_routes
 from app.video_api import add_video_routes
@@ -58,6 +66,24 @@ from app.worker import Event, Services, ZoneFrame, build_services, graph_node
 logging.basicConfig(format="%(levelname)s:     %(name)s - %(message)s")
 logging.getLogger("app").setLevel(logging.INFO)
 log = logging.getLogger(__name__)
+
+
+class HideTokens(logging.Filter):
+    """Keep ?token=... (session tokens on image and download links) out of the access log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(re.sub(r"token=[^&\s]+", "token=***", a) if isinstance(a, str) else a
+                                for a in record.args)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(HideTokens())
+
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
 
 DISPLAY_WIDTH = 960  # snapshot and overlays share this width, so they line up
 GRADCAM_WIDTH = 640  # Grad-CAM needs a backward pass: keep its input small
@@ -166,8 +192,54 @@ def create_app(settings: Settings | None = None, services_factory=build_services
             services.store.close()  # saves writes still queued for MongoDB
 
     api = FastAPI(title="Kumbh Mela crowd-safety API", version="0.4.0", lifespan=lifespan)
+    sessions = Sessions(settings.secret_key, settings.session_hours)
+    users = UserStore(settings.users_config)
+    if settings.secret_key_ephemeral:
+        log.warning("SECRET_KEY is not set in .env: using a random one, so everyone must log in again after a "
+                    "restart. Run: python -m tools.create_user --list (it adds SECRET_KEY to .env)")
+
+    @api.middleware("http")
+    async def require_login(request: Request, call_next):
+        """Every /api/ route needs a valid session token (header or ?token=); some need the admin role.
+        Added before CORS, so CORS wraps it and the browser can read the 401/403 replies."""
+        rule = required_role(request.method, request.url.path)
+        if rule is None or request.method == "OPTIONS":
+            return await call_next(request)
+        header = request.headers.get("authorization", "")
+        token = header[7:].strip() if header.lower().startswith("bearer ") else request.query_params.get("token")
+        try:
+            claims = sessions.verify(token)
+        except TokenError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=401)
+        if rule == "admin" and claims["role"] != "admin":
+            return JSONResponse({"detail": f"This needs the {ROLES['admin']} role; you are logged in as "
+                                           f"{ROLES[claims['role']]}."}, status_code=403)
+        request.state.user = claims
+        return await call_next(request)
+
     api.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"],
                        expose_headers=["X-Frame-Timestamp"])
+
+    @api.post("/api/auth/login")
+    async def login(body: LoginBody):
+        if users.count() == 0:
+            raise HTTPException(503, "No user accounts are set up yet. On the server run: "
+                                     "cd backend; ..\\venv\\Scripts\\python.exe -m tools.create_user")
+        user = await asyncio.to_thread(users.authenticate, body.username, body.password)  # PBKDF2: ~0.2 s
+        if user is None:
+            raise HTTPException(401, "Wrong username or password.")
+        token, claims = sessions.issue(user)
+        return {"token": token, "expires_at": claims["exp"], "user": user.public()}
+
+    @api.get("/api/auth/me")
+    def me(request: Request):
+        claims = request.state.user
+        return {**user_from_claims(claims).public(), "expires_at": claims["exp"]}
+
+    @api.post("/api/auth/logout", status_code=204)
+    def logout(request: Request):
+        sessions.revoke(request.state.user)
+        return Response(status_code=204)
 
     def services() -> Services:
         return api.state.services
@@ -351,12 +423,16 @@ def create_app(settings: Settings | None = None, services_factory=build_services
 
     @sio.event
     async def connect(sid, environ, auth=None):
+        try:
+            sessions.verify(auth.get("token") if isinstance(auth, dict) else None)
+        except TokenError as exc:
+            raise socketio.exceptions.ConnectionRefusedError(str(exc)) from None
         s = getattr(api.state, "services", None)
         for payload in list(s.worker.latest.values()) if s and s.worker else []:
             await sio.emit("density_update", with_server_time(payload), to=sid)
 
     app = socketio.ASGIApp(sio, other_asgi_app=api)
-    app.api, app.sio = api, sio  # handles for tests
+    app.api, app.sio, app.sessions = api, sio, sessions  # handles for tests
     return app
 
 

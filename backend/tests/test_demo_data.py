@@ -9,7 +9,7 @@ from app.alert_dispatcher import AlertEvent, Delivery
 from app.main import create_app
 from app.risk_engine import RiskLevel, ZoneStatus
 from tools.quarantine_demo_data import demo_query, move, summarise
-from tests.fakes import make_services
+from tests.fakes import auth_headers, make_services
 from tests.test_store import mongo_store
 
 RED, GREEN = RiskLevel.RED, RiskLevel.GREEN
@@ -51,7 +51,7 @@ def test_the_api_never_returns_demo_alerts_or_readings():
     fill(store)
     services = make_services(store=store)
     app = create_app(services.settings, services_factory=lambda _: services, run_loop=False)
-    with TestClient(app) as http:
+    with TestClient(app, headers=auth_headers(services.settings)) as http:
         assert [a["zone_id"] for a in http.get("/api/alerts/recent").json()] == ["R"]
         assert [a["zone_id"] for a in http.get("/api/reports/alerts").json()] == ["R"]
         assert http.get("/api/zones/RAMKUND_NORTH/history").json()["readings"] == []

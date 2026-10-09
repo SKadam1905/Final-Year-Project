@@ -9,8 +9,8 @@ const CONNECTION = {
 
 const PAGES = [
   { page: "live", href: routeHref.live, label: "Live dashboard" },
-  { page: "video", href: routeHref.video, label: "Video analysis" },
-  { page: "reports", href: routeHref.reports, label: "Reports" },
+  { page: "video", href: routeHref.video, label: "Video analysis", admin: true },
+  { page: "reports", href: routeHref.reports, label: "Reports", admin: true },
 ];
 
 const BUTTON = "rounded-md px-3 py-1.5 text-sm font-bold focus:outline-none focus-visible:ring-4 focus-visible:ring-sky-400";
@@ -35,9 +35,10 @@ function SoundControl({ sound }) {
   );
 }
 
-export default function Header({ connection, lastUpdate, page = "live", sound = null }) {
+export default function Header({ connection, lastUpdate, page = "live", sound = null, user = null, onLogout = null }) {
   const status = CONNECTION[connection];
-  const current = page === "report" ? "video" : page;
+  const current = page === "report" ? "video" : page === "classic" ? "live" : page;
+  const pages = PAGES.filter((item) => !item.admin || !user || user.role === "admin");
   return (
     <header className="sticky top-0 z-20 bg-slate-900 text-white shadow print:hidden">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 py-3 sm:px-6">
@@ -46,7 +47,7 @@ export default function Header({ connection, lastUpdate, page = "live", sound = 
           <p className="text-xs text-slate-300 sm:text-sm">Nashik Kumbh Mela 2027 · stampede risk prototype</p>
         </div>
         <nav aria-label="Pages" className="flex gap-2">
-          {PAGES.map((item) => (
+          {pages.map((item) => (
             <a key={item.page} href={item.href} aria-current={current === item.page ? "page" : undefined}
               className={`rounded-md px-3 py-1.5 text-sm font-bold focus:outline-none focus-visible:ring-4 focus-visible:ring-sky-400 ${
                 current === item.page ? "bg-white text-slate-900" : "bg-slate-700 text-white hover:bg-slate-600"
@@ -65,6 +66,14 @@ export default function Header({ connection, lastUpdate, page = "live", sound = 
             Last update <time className="font-semibold text-white">{formatTime(lastUpdate)}</time>
           </span>
         </div>
+        {user && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-slate-200"><span className="font-semibold text-white">{user.name}</span> · {user.role_label}</span>
+            {onLogout && (
+              <button type="button" onClick={onLogout} className={`${BUTTON} bg-slate-700 text-white hover:bg-slate-600`}>Log out</button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

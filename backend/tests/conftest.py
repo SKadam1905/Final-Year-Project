@@ -8,6 +8,7 @@ import pytest
 # Tests never load YOLO from .env's weights (slow, needs the GPU); detector tests use fakes.
 # Set before app.config reads the environment (load_dotenv does not override it).
 os.environ["YOLO_WEIGHTS"] = "off"
+os.environ["SECRET_KEY"] = "pytest-secret-key"  # session tokens (app.auth); never the one in .env
 
 
 def write_video(path: Path, frames: list[np.ndarray], fps: float = 25.0) -> Path:

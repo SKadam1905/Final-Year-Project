@@ -48,3 +48,10 @@ dist/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Dashboard user accounts (PBKDF2 hashes; tools/create_user.py)
+config/users.json
+config/users.tmp
+# UI screenshots show camera frames (faces): keep them local, except the login page
+results/ui/*
+!results/ui/*login*.png

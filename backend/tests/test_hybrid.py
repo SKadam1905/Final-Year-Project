@@ -11,7 +11,7 @@ from app.config import ZoneConfig, get_settings
 from app.detector import load_detector
 from app.main import create_app
 from app.pipeline import ZoneAnalyzer, choose_count
-from tests.fakes import FakeDetector, FakeEstimator, make_services
+from tests.fakes import FakeDetector, FakeEstimator, auth_headers, make_services
 
 FRAMES = [np.full((64, 96, 3), 90, np.uint8)] * 5  # motionless: turbulence 0
 
@@ -111,7 +111,7 @@ def test_payload_storage_and_alert_carry_method_grid_and_hotspot():
 def test_detections_overlay_endpoint():
     services = make_services(count=30, detector=FakeDetector(4))
     app = create_app(services.settings, services_factory=lambda _: services, run_loop=False)
-    with TestClient(app) as client:
+    with TestClient(app, headers=auth_headers(services.settings)) as client:
         client.post("/api/zones/RAMKUND_NORTH/infer")
         response = client.get("/api/zones/RAMKUND_NORTH/detections.png")
         assert response.status_code == 200 and response.headers["content-type"] == "image/png"
@@ -120,7 +120,7 @@ def test_detections_overlay_endpoint():
 
     services = make_services(count=30)  # no detector
     app = create_app(services.settings, services_factory=lambda _: services, run_loop=False)
-    with TestClient(app) as client:
+    with TestClient(app, headers=auth_headers(services.settings)) as client:
         client.post("/api/zones/RAMKUND_NORTH/infer")
         response = client.get("/api/zones/RAMKUND_NORTH/detections.png")
         assert response.status_code == 503 and "detection" in response.json()["detail"]

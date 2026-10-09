@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import { API_URL, api, fetchImage, imageUrl } from "./api.js";
+import { API_URL, api, fetchImage, imageUrl, socketOptions, socketRefused } from "./api.js";
 import { initialState, reducer } from "./liveState.js";
 
 const RETRY_MS = 5000;
@@ -50,14 +50,17 @@ export function useLiveZones() {
   useEffect(() => {
     // Connect one tick later: React's development double-mount then never opens a socket it closes
     // at once (which the browser reports as "WebSocket is closed before the connection is established").
-    const socket = io(API_URL, { transports: ["websocket", "polling"], reconnectionDelayMax: RETRY_MS, autoConnect: false });
+    const socket = io(API_URL, socketOptions({ reconnectionDelayMax: RETRY_MS }));
     const connectTimer = setTimeout(() => socket.connect(), 0);
     socket.on("connect", () => {
       setConnection("live");
       load(); // the backend may have restarted with different zones or a model
     });
     socket.on("disconnect", () => setConnection("disconnected"));
-    socket.on("connect_error", () => setConnection("disconnected"));
+    socket.on("connect_error", (error) => {
+      setConnection("disconnected");
+      if (socketRefused(error)) socket.disconnect();
+    });
     socket.on("density_update", (payload) => dispatch({ type: "density", payload, now: Date.now() }));
     socket.on("alert", (alert) => dispatch({ type: "alert", alert }));
     socket.on("zones_changed", (change) => {

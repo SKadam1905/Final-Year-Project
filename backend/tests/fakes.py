@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from app.alert_dispatcher import AlertDispatcher, AlertPolicy, Delivery
+from app.auth import Sessions, User
 from app.config import ZoneConfig, get_settings
 from app.csrnet_model import CSRNet, DensityEstimator, DensityResult
 from app.detector import Detections
@@ -25,6 +26,12 @@ ZONES = [
     ZoneConfig("RAMKUND_NORTH", "Ramkund north steps", "rtsp://admin:secret@10.0.0.5:554/stream1", area_m2=100.0),
     ZoneConfig("CAMERA_X", "Off-graph camera", "rtsp://10.0.0.6/stream", area_m2=100.0),
 ]
+
+
+def auth_headers(settings, role: str = "admin") -> dict:
+    """An Authorization header with a valid session token for a test user with `role`."""
+    token, _ = Sessions(settings.secret_key, settings.session_hours).issue(User(f"test-{role}", f"Test {role}", role))
+    return {"Authorization": f"Bearer {token}"}
 
 
 class FakeEstimator:

@@ -1,3 +1,8 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Respect "reduce motion": risk pulses and route animation stop, colours and words still show the state. */
+@media (prefers-reduced-motion: reduce) {
+  .motion-safe-only { animation: none !important; }
+}
