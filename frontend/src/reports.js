@@ -66,9 +66,10 @@ export function toCsv(rows, columns) {
   return [header, ...lines].join("\r\n") + "\r\n";
 }
 
-/** Save CSV text as a file through a temporary link. */
+/** Save CSV text as a file through a temporary link. The UTF-8 byte-order mark makes Excel read it as
+ * UTF-8; without it Excel uses the ANSI code page and garbles names such as "रामकुंड घाट". */
 export function downloadCsv(filename, csv) {
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const url = URL.createObjectURL(new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;

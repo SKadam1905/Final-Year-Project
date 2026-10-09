@@ -127,3 +127,9 @@ def test_telegram_success_and_token_redaction():
 
     bad = TelegramChannel(token, "42", client=httpx.Client(transport=httpx.MockTransport(rejected))).send("hi")
     assert bad[0].error == "Bad Request: chat not found"
+
+
+def test_telegram_gives_up_quickly_without_internet():
+    """Alerts are sent inside the inference cycle, so a dead network must not hold it for long."""
+    timeout = TelegramChannel("123:abc", "42")._client.timeout
+    assert (timeout.connect, timeout.read, timeout.write) == (3.0, 5.0, 5.0)

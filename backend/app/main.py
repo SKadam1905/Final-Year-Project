@@ -90,6 +90,16 @@ def image_response(data: bytes, fmt: str, timestamp: float) -> Response:
                     headers={"Cache-Control": "no-store", "X-Frame-Timestamp": f"{timestamp:.3f}"})
 
 
+def quiet_connection_resets(loop, context: dict) -> None:
+    """Event-loop exception handler. On Windows the proactor loop logs a full traceback whenever a
+    browser drops its connection (ConnectionResetError in _call_connection_lost): normal, not an
+    error. Everything else goes to the default handler."""
+    if isinstance(context.get("exception"), ConnectionResetError):
+        log.debug("client connection reset: %s", context.get("message"))
+        return
+    loop.default_exception_handler(context)
+
+
 async def run_cycle(worker, emit) -> None:
     """One inference cycle: every zone in parallel threads (optical flow is CPU-bound and OpenCV
     releases the GIL); each zone's events are emitted as soon as that zone is done, so a
@@ -134,6 +144,7 @@ def create_app(settings: Settings | None = None, services_factory=build_services
         services = services_factory(settings)
         api.state.services = services
         loop = asyncio.get_running_loop()
+        loop.set_exception_handler(quiet_connection_resets)
 
         def emit_from_thread(name: str, payload: dict) -> None:
             asyncio.run_coroutine_threadsafe(sio.emit(name, payload), loop)

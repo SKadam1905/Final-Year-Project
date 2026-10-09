@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { ALERT_COLUMNS, formatSpan, reportQuery, timeRange, toCsv } from "./reports.js";
+import { describe, expect, it, vi } from "vitest";
+import { ALERT_COLUMNS, downloadCsv, formatSpan, reportQuery, timeRange, toCsv } from "./reports.js";
 
 describe("reports helpers", () => {
   it("builds the query string, repeating level", () => {
@@ -25,5 +25,17 @@ describe("reports helpers", () => {
       message: 'RED: Ghat 1, "crush"\nGate actions:' }], ALERT_COLUMNS);
     expect(csv).toBe('time_utc,zone_id,risk_level,delivered,message\r\n'
       + '1970-01-01T00:00:00.000Z,GHAT_1,RED,true,"RED: Ghat 1, ""crush""\nGate actions:"\r\n');
+  });
+
+  it("starts the downloaded file with a UTF-8 byte-order mark so Excel reads non-English names", async () => {
+    let blob;
+    const create = vi.spyOn(URL, "createObjectURL").mockImplementation((b) => { blob = b; return "blob:x"; });
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    downloadCsv("alerts.csv", "zone\r\nरामकुंड घाट\r\n");
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(new TextDecoder().decode(bytes.slice(3))).toBe("zone\r\nरामकुंड घाट\r\n");
+    create.mockRestore();
+    revoke.mockRestore();
   });
 });

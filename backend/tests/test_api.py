@@ -182,3 +182,23 @@ def test_cors_exposes_frame_timestamp():
 def test_redact_leaves_plain_urls_alone():
     assert redact("rtsp://localhost:8554/pandharpur_01") == "rtsp://localhost:8554/pandharpur_01"
     assert redact("rtsp://user@cam/live") == "rtsp://***@cam/live"
+
+
+class RecordingLoop:
+    def __init__(self) -> None:
+        self.forwarded = []
+
+    def default_exception_handler(self, context):
+        self.forwarded.append(context)
+
+
+def test_a_dropped_browser_connection_is_not_logged_as_an_error():
+    from app.main import quiet_connection_resets
+
+    loop = RecordingLoop()
+    quiet_connection_resets(loop, {"message": "Exception in callback _call_connection_lost",
+                                   "exception": ConnectionResetError(10054, "forcibly closed")})
+    assert loop.forwarded == []  # Windows proactor noise: dropped
+    real = {"message": "Task exception was never retrieved", "exception": ValueError("bug")}
+    quiet_connection_resets(loop, real)
+    assert loop.forwarded == [real]  # anything else still reaches the default handler

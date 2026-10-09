@@ -81,7 +81,11 @@ powershell -ExecutionPolicy Bypass -File scripts\stop_demo.ps1
 
 It starts the backend and the dashboard hidden in the background (logs in `results\demo_*.log`),
 waits until the model is loaded, and prints the URL (http://localhost:5173). `-InMemory` keeps
-the run out of MongoDB.
+the run out of MongoDB. If another program holds port 8000 or 5173 it asks before stopping it
+(`-Force`: without asking) or prints the command to do it. It warns about missing `.env` values
+(weights, Telegram) and says so when MongoDB or Telegram cannot be reached; the demo then still
+runs, with in-memory storage and alerts marked as not delivered. `stop_demo.ps1` also stops this
+project's backend or dashboard started by hand on those ports.
 
 **A. Without Docker (by hand).** `FRAME_SOURCE=local` is the default: the backend reads the
 cameras and video files itself. Point `CSRNET_WEIGHTS` at a model (for the authors' checkpoint
@@ -504,6 +508,21 @@ every 2 s, then saved in order. A reading takes about 180 bytes (about 10 MB per
 of non-stop running, with indexes), so the free 512 MB lasts about 12 days of 4 cameras running
 24 h; export or delete old `zone_readings` before then. To run the store tests against a real
 cluster, set `TEST_MONGODB_URI`; they use, then drop, a `kumbh_pytest` database.
+
+Every reading, incident and alert stores `model_kind`, the kind of weights that made it. Data made
+with demo or provenance-less weights is never returned unless `DEMO_MODE=1`. Data from before
+the tag existed is moved out with `tools.quarantine_demo_data`. The tool copies it to
+`<collection>_demo_backup` and only then deletes it from the live collection; without `--apply`
+it is a dry run:
+
+```powershell
+cd backend
+..\venv\Scripts\python.exe -m tools.quarantine_demo_data --legacy-before 2026-10-09T00:00:00Z          # dry run
+..\venv\Scripts\python.exe -m tools.quarantine_demo_data --legacy-before 2026-10-09T00:00:00Z --apply
+```
+
+On 2026-10-09 this moved the demo model's 17,737 readings (all counting 700.05 people; 2026-10-08
+14:23-17:34 UTC), 2 incidents and 36 alerts. The 2,245 real readings were kept.
 
 ## Repository layout
 

@@ -11,6 +11,9 @@ recipient) nested inside: the same dict the worker emits as the Socket.IO "alert
 MongoDB collections (database MONGODB_DB):
     zones           _id = zone id; name, camera_source (credentials hidden), area_m2, graph_node
     zone_readings   zone_id, ts, pressure (30 s mean), raw_pressure, density, turbulence, count, risk_level
+Readings, incidents and alerts also store `model_kind`, the kind of weights that made them
+(app.csrnet_model.describe_weights). Data made with demo or provenance-less weights is never
+returned unless DEMO_MODE=1; tools/quarantine_demo_data.py moves old untagged demo data out.
     incidents       zone_id, started_at, ended_at (null while open), peak_level/pressure/density/count
     alerts          zone_id, incident_id, risk_level, message, triggered_at, delivered,
                     deliveries [{channel, recipient, delivered, latency_ms, provider_id, error}]
@@ -34,6 +37,8 @@ from app.config import ZoneConfig, redact
 from app.risk_engine import RiskLevel, ZoneStatus
 
 log = logging.getLogger(__name__)
+
+DEMO_KINDS = ("demo", "untrained")  # model kinds whose readings are not real counts
 
 
 def to_datetime(ts: float) -> datetime:
@@ -224,9 +229,11 @@ class MongoStore:
     """
 
     kind = "mongodb"
+    model_kind: str | None = None  # kind of the weights making the readings; set once the model has loaded
 
     def __init__(self, uri: str, db_name: str, client=None, timeout_ms: int = 5000, retry_s: float = 2.0,
-                 max_queued: int = 50_000) -> None:
+                 max_queued: int = 50_000, show_demo: bool = False) -> None:
+        self.show_demo = show_demo  # DEMO_MODE=1: also return data made with demo or provenance-less weights
         from bson import ObjectId
         from pymongo import ASCENDING, DESCENDING, MongoClient
 
@@ -240,7 +247,8 @@ class MongoStore:
         self.db.incidents.create_index([("zone_id", ASCENDING), ("ended_at", ASCENDING)])
         self.db.incidents.create_index([("started_at", DESCENDING)])
         self.db.alerts.create_index([("triggered_at", DESCENDING)])
-        self._open = {doc["zone_id"]: self._incident(doc) for doc in self.db.incidents.find({"ended_at": None})}
+        self._open = {doc["zone_id"]: self._incident(doc)
+                      for doc in self.db.incidents.find(self._visible({"ended_at": None}))}
 
         self.retry_s = retry_s
         self._queue: queue.Queue[Callable[[], object] | None] = queue.Queue(max_queued)
@@ -296,7 +304,7 @@ class MongoStore:
 
     def record_reading(self, status: ZoneStatus) -> None:
         doc = {"_id": self._object_id(), "zone_id": status.zone_id, "ts": to_datetime(status.timestamp),
-               **reading_dict(status.timestamp, status)}
+               **reading_dict(status.timestamp, status), "model_kind": self.model_kind}
         del doc["timestamp"]
         self._submit(lambda: self.db.zone_readings.insert_one(doc))
 
@@ -308,7 +316,7 @@ class MongoStore:
                                      status.smoothed_pressure, status.density, status.count)
                 self._open[status.zone_id] = incident
                 new = {"_id": oid, "zone_id": status.zone_id, "started_at": to_datetime(status.timestamp),
-                       "ended_at": None, **self._peaks(incident)}
+                       "ended_at": None, **self._peaks(incident), "model_kind": self.model_kind}
                 self._submit(lambda: self.db.incidents.insert_one(new))
             else:
                 update_peaks(incident, status)
@@ -331,7 +339,7 @@ class MongoStore:
         doc = {"_id": oid, "zone_id": event.zone_id,
                "incident_id": self._object_id(incident.id) if incident else None,
                "risk_level": alert["risk_level"], "message": event.text, "triggered_at": to_datetime(event.triggered_at),
-               "delivered": alert["delivered"], "deliveries": alert["deliveries"]}
+               "delivered": alert["delivered"], "deliveries": alert["deliveries"], "model_kind": self.model_kind}
         self._submit(lambda: self.db.alerts.insert_one(doc))
         return alert
 
@@ -350,6 +358,14 @@ class MongoStore:
 
     # Reads ------------------------------------------------------------------------------
 
+    def _visible(self, query: dict | None = None) -> dict:
+        """`query`, leaving out data made with demo or provenance-less weights unless show_demo.
+        Untagged data (from before model_kind was stored) stays visible."""
+        query = dict(query or {})
+        if not self.show_demo:
+            query["model_kind"] = {"$nin": list(DEMO_KINDS)}
+        return query
+
     @staticmethod
     def _alert(d: dict) -> dict:
         return {"id": str(d["_id"]), "zone_id": d["zone_id"], "risk_level": d["risk_level"], "message": d["message"],
@@ -367,7 +383,7 @@ class MongoStore:
         return query
 
     def recent_alerts(self, limit: int = 20) -> list[dict]:
-        docs = self.db.alerts.find().sort([("triggered_at", -1), ("_id", -1)]).limit(limit)
+        docs = self.db.alerts.find(self._visible()).sort([("triggered_at", -1), ("_id", -1)]).limit(limit)
         return [self._alert(d) for d in docs]
 
     def alert_history(self, zone_id=None, levels=(), since=None, until=None, limit=500) -> list[dict]:
@@ -378,7 +394,7 @@ class MongoStore:
             query["risk_level"] = {"$in": list(levels)}
         if when := self._time_range(since, until):
             query["triggered_at"] = when
-        docs = self.db.alerts.find(query).sort([("triggered_at", -1), ("_id", -1)]).limit(limit)
+        docs = self.db.alerts.find(self._visible(query)).sort([("triggered_at", -1), ("_id", -1)]).limit(limit)
         return [self._alert(d) for d in docs]
 
     def incident_history(self, zone_id=None, levels=(), since=None, until=None, limit=500) -> list[dict]:
@@ -391,7 +407,7 @@ class MongoStore:
             query["started_at"] = {"$lte": to_datetime(until)}
         if since is not None:
             query["$or"] = [{"ended_at": None}, {"ended_at": {"$gte": to_datetime(since)}}]
-        docs = self.db.incidents.find(query).sort([("started_at", -1), ("_id", -1)]).limit(limit)
+        docs = self.db.incidents.find(self._visible(query)).sort([("started_at", -1), ("_id", -1)]).limit(limit)
         return [incident_dict(self._incident(d)) for d in docs]
 
     def readings_between(self, since=None, until=None, zone_id=None, limit=50_000) -> list[dict]:
@@ -400,25 +416,26 @@ class MongoStore:
             query["zone_id"] = zone_id
         if when := self._time_range(since, until):
             query["ts"] = when
-        docs = self.db.zone_readings.find(query, {"_id": 0}).sort([("ts", 1), ("_id", 1)]).limit(limit)
+        docs = (self.db.zone_readings.find(self._visible(query), {"_id": 0, "model_kind": 0})
+                .sort([("ts", 1), ("_id", 1)]).limit(limit))
         return [{"timestamp": _utc(d.pop("ts")).timestamp(), **d} for d in docs]
 
     def recent_incidents(self, limit: int = 50) -> list[dict]:
-        docs = self.db.incidents.find().sort([("started_at", -1), ("_id", -1)]).limit(limit)
+        docs = self.db.incidents.find(self._visible()).sort([("started_at", -1), ("_id", -1)]).limit(limit)
         return [incident_dict(self._incident(d)) for d in docs]
 
     def history(self, zone_id: str, limit: int = 150) -> list[dict]:
-        docs = list(self.db.zone_readings.find({"zone_id": zone_id}, {"_id": 0, "zone_id": 0})
+        docs = list(self.db.zone_readings.find(self._visible({"zone_id": zone_id}), {"_id": 0, "zone_id": 0, "model_kind": 0})
                     .sort([("ts", -1), ("_id", -1)]).limit(limit))
         return [{"timestamp": _utc(d.pop("ts")).timestamp(), **d} for d in reversed(docs)]
 
 
-def open_store(mongodb_uri: str, db_name: str = "kumbhmela", timeout_ms: int = 5000) -> Store:
+def open_store(mongodb_uri: str, db_name: str = "kumbhmela", timeout_ms: int = 5000, show_demo: bool = False) -> Store:
     """MongoStore if the database answers, otherwise MemoryStore (with a warning)."""
     if not mongodb_uri:
         return MemoryStore()
     try:
-        return MongoStore(mongodb_uri, db_name, timeout_ms=timeout_ms)
+        return MongoStore(mongodb_uri, db_name, timeout_ms=timeout_ms, show_demo=show_demo)
     except Exception as exc:  # unreachable, wrong password, IP not on the Atlas access list, bad URI
         log.warning("MongoDB unavailable (%s); keeping readings, incidents and alerts in memory", exc)
         return MemoryStore()

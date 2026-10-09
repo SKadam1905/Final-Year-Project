@@ -63,11 +63,14 @@ class ConsoleChannel:
 class TelegramChannel:
     name = "telegram"
 
-    def __init__(self, bot_token: str, chat_id: str, client: httpx.Client | None = None, timeout_s: float = 10.0):
+    def __init__(self, bot_token: str, chat_id: str, client: httpx.Client | None = None, timeout_s: float = 5.0,
+                 connect_timeout_s: float = 3.0):
         self._token = bot_token
         self._url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         self.chat_id = chat_id
-        self._client = client or httpx.Client(timeout=timeout_s)
+        # Sending runs inside the inference cycle: on Wi-Fi without internet, give up quickly rather
+        # than hold the live dashboard for long (Telegram itself answers in well under a second).
+        self._client = client or httpx.Client(timeout=httpx.Timeout(timeout_s, connect=connect_timeout_s))
 
     def send(self, text: str) -> list[Delivery]:
         started = time.perf_counter()

@@ -31,6 +31,7 @@ results/*.log
 results/demo.pids
 # frames of news footage with identifiable faces (ethics: do not publish raw frames)
 results/kumbh_check/*.jpg
+results/qa/
 
 # Model weights
 *.pth

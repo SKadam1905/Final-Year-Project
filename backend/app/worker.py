@@ -414,7 +414,7 @@ def build_services(settings: Settings) -> Services:
     for z in zones:
         if z.graph_node and z.graph_node not in router.graph:
             raise ValueError(f"zone {z.id!r}: graph_node {z.graph_node!r} is not in the exit graph")
-    store = open_store(settings.mongodb_uri, settings.mongodb_db)
+    store = open_store(settings.mongodb_uri, settings.mongodb_db, show_demo=settings.demo_mode)
     try:
         store.sync_zones(zones)
     except Exception as exc:
@@ -448,6 +448,7 @@ def build_services(settings: Settings) -> Services:
         log.warning(error)
         return Services(settings, by_id, router, store, source, None, error)
 
+    store.model_kind = estimator.info["kind"]  # stored with every reading and alert
     from app.detector import load_detector
 
     detector, detector_error = load_detector(settings.yolo_weights, settings.device, settings.yolo_imgsz,
