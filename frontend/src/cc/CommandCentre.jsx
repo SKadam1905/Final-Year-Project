@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { API_URL } from "../api.js";
 import { formatTime } from "../format.js";
 import { sortZones } from "../risk.js";
+import GhatMap from "./GhatMap.jsx";
 import KpiStrip from "./KpiStrip.jsx";
 import { computeKpis } from "./kpi.js";
 import ZoneList from "./ZoneList.jsx";
@@ -54,6 +55,8 @@ export default function CommandCentre({ live, selectedId, onSelect }) {
         <div className="pt-3"><KpiStrip kpis={kpis} health={backend.health} /></div>
         <main className="grid gap-3 px-3 pt-3 sm:px-4 lg:grid-cols-[minmax(0,1fr)_minmax(340px,410px)]">
           <div className="min-w-0 space-y-3">
+            <GhatMap zones={zones} now={now} connected={connected} thresholds={backend.config?.thresholds}
+              selectedId={selectedId} onSelect={onSelect} />
             <ZoneList zones={zones} now={now} connected={connected} selectedId={selectedId} onSelect={onSelect} />
           </div>
           <aside aria-label="Selected zone" className="min-w-0 space-y-3">

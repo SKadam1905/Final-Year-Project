@@ -91,6 +91,7 @@ class Settings:
     secret_key: str = ""  # signs session tokens (app.auth); from .env SECRET_KEY
     secret_key_ephemeral: bool = False  # True: SECRET_KEY was missing, a random one is used until restart
     users_config: Path = REPO_ROOT / "config" / "users.json"
+    site_map: Path = REPO_ROOT / "config" / "site_map.json"  # schematic node positions for the map
     session_hours: float = 8.0
 
 
@@ -135,6 +136,7 @@ def get_settings() -> Settings:
         secret_key_ephemeral=not _env("SECRET_KEY", ""),
         users_config=repo_path(_env("USERS_CONFIG", "config/users.json")),
         session_hours=float(_env("SESSION_HOURS", "8")),
+        site_map=repo_path(_env("SITE_MAP", "config/site_map.json")),
     )
 
 

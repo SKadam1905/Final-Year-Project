@@ -18,7 +18,8 @@ function emptyZone(id, name) {
 export function setZones(state, configs) {
   const zones = {};
   for (const config of configs) {
-    zones[config.id] = { ...(state.zones[config.id] ?? emptyZone(config.id)), name: config.name, kind: config.kind ?? "camera" };
+    zones[config.id] = { ...(state.zones[config.id] ?? emptyZone(config.id)), name: config.name, kind: config.kind ?? "camera",
+      graphNode: config.graph_node ?? null };
   }
   return { ...state, zones, removed: state.removed.filter((id) => !zones[id]) };
 }

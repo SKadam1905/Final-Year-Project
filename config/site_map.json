@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Positions of the exit-graph nodes (backend/app/exit_router.py) on the Command Centre map.",
+    "SCHEMATIC: these are layout positions on a 1000 x 640 canvas, chosen so no walkways cross; they are",
+    "not surveyed coordinates and distances are not to scale. Replace x/y with real positions (e.g. traced",
+    "from OpenStreetMap and scaled to this canvas) when the site map is available; keep schematic=true until then.",
+    "kind: zone (a monitored Ramkund area), ghat, or gate (an exit gate). Every node of the exit graph needs an entry.",
+    "label_at (optional): where the name goes, below (default), above, left or right, to keep it off the walkways."
+  ],
+  "schematic": true,
+  "note": "Schematic map, not to scale",
+  "width": 1000,
+  "height": 640,
+  "nodes": {
+    "RAMKUND_NORTH": {"label": "Ramkund North", "kind": "zone", "x": 650, "y": 205},
+    "RAMKUND_SOUTH": {"label": "Ramkund South", "kind": "zone", "x": 330, "y": 445, "label_at": "right"},
+    "RAMKUND_EAST": {"label": "Ramkund East", "kind": "zone", "x": 905, "y": 300, "label_at": "below"},
+    "RAMKUND_WEST": {"label": "Ramkund West", "kind": "zone", "x": 255, "y": 330, "label_at": "above"},
+    "GHAT_1": {"label": "Ghat 1", "kind": "ghat", "x": 530, "y": 150, "label_at": "left"},
+    "GHAT_2": {"label": "Ghat 2", "kind": "ghat", "x": 210, "y": 515, "label_at": "below"},
+    "GHAT_3": {"label": "Ghat 3", "kind": "ghat", "x": 820, "y": 515, "label_at": "below"},
+    "EXIT_GATE_A": {"label": "Gate A", "kind": "gate", "x": 480, "y": 55, "label_at": "right"},
+    "EXIT_GATE_B": {"label": "Gate B", "kind": "gate", "x": 85, "y": 300, "label_at": "below"},
+    "EXIT_GATE_C": {"label": "Gate C", "kind": "gate", "x": 650, "y": 465, "label_at": "left"},
+    "EXIT_GATE_D": {"label": "Gate D", "kind": "gate", "x": 520, "y": 560, "label_at": "below"}
+  }
+}

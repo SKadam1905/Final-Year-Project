@@ -21,6 +21,7 @@ REST
     POST /api/zones/{zone_id}/infer         run inference now on the zone's newest frames
     GET  /api/alerts/recent                 last 20 alerts, newest first
     GET  /api/incidents                     last 50 incidents (ORANGE/RED periods)
+    GET  /api/site-map                      schematic node positions (config/site_map.json) + the walkways
 Video analysis (upload, jobs, video zones): see app/video_api.py. Reports (filtered history, summaries): app/reports.py.
 Socket.IO (path /socket.io; connect with auth {token}, refused without a valid one)
     density_update  {zone_id, name, timestamp, server_time, density, turbulence, pressure, raw_pressure,
@@ -39,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import threading
@@ -309,8 +311,33 @@ def create_app(settings: Settings | None = None, services_factory=build_services
     def list_zones():
         s = services()
         video_zones = api.state.video.video_zones
-        return [{**zone_info(z, graph_node(z, s.router)), "kind": "video" if z.id in video_zones else "camera"}
+        overrides = s.worker.overrides if s.worker else {}  # a test video's place on the exit map
+
+        def node(z: ZoneConfig) -> str | None:
+            return overrides[z.id].node if z.id in overrides else graph_node(z, s.router)
+
+        return [{**zone_info(z, node(z)), "kind": "video" if z.id in video_zones else "camera"}
                 for z in list(s.zones.values())]
+
+    @api.get("/api/site-map")
+    def site_map():
+        """The exit graph for the Command Centre map: node positions from config/site_map.json
+        (schematic until real coordinates are entered) and every walkway with its length."""
+        try:
+            data = json.loads(settings.site_map.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, f"site map unavailable ({settings.site_map.name}): {exc}") from exc
+        router = services().router
+        placed = data.get("nodes", {})
+        nodes = [{"id": n, "label": placed[n].get("label", n), "kind": placed[n].get("kind", "zone"),
+                  "x": placed[n]["x"], "y": placed[n]["y"], "label_at": placed[n].get("label_at", "below"),
+                  "exit": n in router.exits}
+                 for n in router.graph.nodes if n in placed]
+        edges = [{"a": a, "b": b, "metres": d["base_weight"]}
+                 for a, b, d in router.graph.edges(data=True) if a < b and a in placed and b in placed]
+        return {"schematic": data.get("schematic", True), "note": data.get("note", "Schematic map, not to scale"),
+                "width": data.get("width", 1000), "height": data.get("height", 600), "nodes": nodes, "edges": edges,
+                "unplaced": sorted(set(router.graph.nodes) - set(placed))}
 
     @api.get("/api/zones/{zone_id}/status")
     def zone_status(zone_id: str):
