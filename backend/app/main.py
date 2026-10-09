@@ -20,6 +20,7 @@ REST
     GET  /api/zones/{zone_id}/gradcam.png   Grad-CAM of the count: transparent overlay sized to the snapshot
     POST /api/zones/{zone_id}/infer         run inference now on the zone's newest frames
     GET  /api/alerts/recent                 last 20 alerts, newest first
+    POST /api/alerts/{alert_id}/ack         acknowledge an alert (who and when are stored); emits "alert_ack"
     GET  /api/incidents                     last 50 incidents (ORANGE/RED periods)
     GET  /api/site-map                      schematic node positions (config/site_map.json) + the walkways
 Video analysis (upload, jobs, video zones): see app/video_api.py. Reports (filtered history, summaries): app/reports.py.
@@ -27,7 +28,8 @@ Socket.IO (path /socket.io; connect with auth {token}, refused without a valid o
     density_update  {zone_id, name, timestamp, server_time, density, turbulence, pressure, raw_pressure,
                      risk_level, count, samples, exits, count_method ("density" | "detection"),
                      density_count, detection_count, grid {rows, cols, counts, density, hotspot}, hotspot}
-    alert           {id, zone_id, risk_level, message, timestamp, incident_id, delivered, deliveries}
+    alert           {id, zone_id, risk_level, message, timestamp, incident_id, delivered, deliveries, hotspot,
+                     gate_actions, acknowledged_by, acknowledged_at}; "alert_ack" (same shape) once acknowledged
 New clients get the latest density_update of every zone as soon as they connect.
 
 Timestamps are Unix epoch seconds; `server_time` lets a client judge a reading's age without
@@ -437,6 +439,18 @@ def create_app(settings: Settings | None = None, services_factory=build_services
             return services().store.recent_alerts(min(max(limit, 1), 200))
         except Exception as exc:  # database down
             raise HTTPException(503, f"alerts unavailable: {exc}") from exc
+
+    @api.post("/api/alerts/{alert_id}/ack")
+    async def acknowledge_alert(alert_id: str, request: Request):
+        """A security officer or the admin confirms they are handling the alert."""
+        try:
+            alert = await asyncio.to_thread(services().store.acknowledge, alert_id, request.state.user["sub"])
+        except Exception as exc:  # database down
+            raise HTTPException(503, f"could not acknowledge: {exc}") from exc
+        if alert is None:
+            raise HTTPException(404, f"no alert {alert_id!r}")
+        await sio.emit("alert_ack", alert)
+        return alert
 
     @api.get("/api/incidents")
     def incidents(limit: int = 50):

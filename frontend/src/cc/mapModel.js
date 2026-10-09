@@ -23,6 +23,7 @@ export function buildMapModel({ siteMap, zones, now, connected, thresholds, sele
     return {
       ...node,
       primary,
+      test: node.zones.every((z) => z.kind === "video"), // only test videos here: never part of live routing
       level: displayLevel(primary, now, connected).label,
       live: liveZones.length > 0,
       pressure: liveZones.length ? Math.max(...liveZones.map((z) => z.reading.pressure)) : null,
@@ -40,7 +41,10 @@ export function buildMapModel({ siteMap, zones, now, connected, thresholds, sele
   const selected = zones.find((z) => z.id === selectedId);
   const best = selected && zoneState(selected, now, connected) === "live" ? selected.reading.exits?.[0] : null;
   if (best && best.path.every((id) => placed[id])) {
-    route = { gate: best.exit, path: best.path, points: best.path.map((id) => [placed[id].x, placed[id].y]) };
+    route = {
+      gate: best.exit, path: best.path, points: best.path.map((id) => [placed[id].x, placed[id].y]),
+      throughTest: selected.kind !== "video" && best.path.some((id) => placed[id].test),
+    };
   }
   return { nodes, edges, route, offMap, selectedNode: selected?.graphNode ?? null };
 }

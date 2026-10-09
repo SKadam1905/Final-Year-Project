@@ -77,6 +77,7 @@ export function useLiveZones() {
     });
     socket.on("density_update", (payload) => dispatch({ type: "density", payload, now: Date.now() }));
     socket.on("alert", (alert) => dispatch({ type: "alert", alert }));
+    socket.on("alert_ack", (alert) => dispatch({ type: "alertAck", alert }));
     socket.on("zones_changed", (change) => {
       if (change?.removed) dispatch({ type: "removeZone", zoneId: change.removed });
       load(); // an uploaded video was added or removed as a live zone
@@ -89,6 +90,13 @@ export function useLiveZones() {
 
   const dismissBanner = useCallback((key) => dispatch({ type: "dismiss", key }), []);
 
+  /** Acknowledge an alert as the logged-in user; rejects with the backend's reason. */
+  const acknowledge = useCallback(async (alert) => {
+    const updated = await api.ackAlert(alert.id);
+    dispatch({ type: "alertAck", alert: updated });
+    return updated;
+  }, []);
+
   const loadHistory = useCallback(async (zoneId) => {
     try {
       const body = await api.history(zoneId, 300); // 10 minutes at one reading every 2 s
@@ -98,7 +106,7 @@ export function useLiveZones() {
     }
   }, []);
 
-  return { state, now, connection, backend, dismissBanner, loadHistory };
+  return { state, now, connection, backend, dismissBanner, loadHistory, acknowledge };
 }
 
 const EMPTY_FEED = { snapshot: null, overlay: null, snapshotError: null, overlayError: null, capturedAt: null };

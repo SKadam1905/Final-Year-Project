@@ -104,6 +104,12 @@ export function prependAlert(state, alert) {
   return { ...state, alerts: newestFirst([alert, ...state.alerts]), banners: withBanner(state.banners, alert, state.dismissed) };
 }
 
+/** An acknowledged alert (the "alert_ack" event or the API's reply): who and when, merged in. */
+export function ackAlert(state, alert) {
+  const key = alertKey(alert);
+  return { ...state, alerts: state.alerts.map((a) => (alertKey(a) === key ? { ...a, ...alert } : a)) };
+}
+
 /** Dismissed banners stay dismissed, even when the alert list is reloaded. */
 export function dismissBanner(state, key) {
   return { ...state, banners: state.banners.filter((k) => k !== key), dismissed: [...state.dismissed, key] };
@@ -130,6 +136,8 @@ export function reducer(state, action) {
       return prependAlert(state, action.alert);
     case "dismiss":
       return dismissBanner(state, action.key);
+    case "alertAck":
+      return ackAlert(state, action.alert);
     case "removeZone":
       return removeZone(state, action.zoneId);
     default:

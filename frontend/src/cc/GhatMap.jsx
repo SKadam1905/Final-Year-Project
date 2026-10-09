@@ -95,6 +95,10 @@ function Node({ node, selected, safestExit, onSelect, onHover }) {
             fill={["RED", "NO SIGNAL", "WAITING"].includes(node.level) ? "#FFFFFF" : "#0B1220"}>
             {node.live ? <AnimatedCount value={node.primary.reading.count} /> : ui.icon}
           </text>
+          {node.test && (
+            <g><rect x={x - r - 6} y={y - r - 4} width="44" height="18" rx="4" fill="#6D28D9" stroke="#0B1220" strokeWidth="1.5" />
+              <text x={x - r + 16} y={y - r + 9} textAnchor="middle" fontSize="11" fontWeight="700" fill="#fff">TEST</text></g>
+          )}
           {node.zones.length > 1 && (
             <g><circle cx={x + r - 2} cy={y - r + 2} r="11" fill="#7C3AED" stroke="#0B1220" strokeWidth="2" />
               <text x={x + r - 2} y={y - r + 6.5} textAnchor="middle" fontSize="12" fontWeight="700" fill="#fff">+{node.zones.length - 1}</text></g>
@@ -187,6 +191,11 @@ export default function GhatMap({ zones, now, connected, thresholds, selectedId,
         <li className="flex items-center gap-1.5"><span aria-hidden="true" className="inline-block h-1 w-6 rounded bg-saffron" />route to the safest gate</li>
         <li>dashed circle = no camera</li>
       </ul>
+      {model.route?.throughTest && (
+        <p className="mt-1 text-xs text-violet-200">
+          This route passes a test-video camera (marked TEST): test videos never change the live exit advice, so the route ignores their crowd.
+        </p>
+      )}
       {model.offMap.length > 0 && (
         <p className="mt-1 text-xs text-slate-400">Not on the map (no exit-map location): {model.offMap.map((z) => z.name).join(", ")}.</p>
       )}

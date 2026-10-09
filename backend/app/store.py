@@ -16,7 +16,8 @@ Readings, incidents and alerts also store `model_kind`, the kind of weights that
 returned unless DEMO_MODE=1; tools/quarantine_demo_data.py moves old untagged demo data out.
     incidents       zone_id, started_at, ended_at (null while open), peak_level/pressure/density/count
     alerts          zone_id, incident_id, risk_level, message, triggered_at, delivered,
-                    deliveries [{channel, recipient, delivered, latency_ms, provider_id, error}]
+                    deliveries [{channel, recipient, delivered, latency_ms, provider_id, error}],
+                    hotspot, gate_actions, acknowledged_by, acknowledged_at (null until acknowledged)
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import logging
 import queue
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Protocol, Sequence
@@ -63,6 +64,7 @@ class Store(Protocol):
     def sync_zones(self, zones: Sequence[ZoneConfig]) -> None: ...
     def record_reading(self, status: ZoneStatus) -> None: ...
     def record_alert(self, event: AlertEvent) -> dict: ...
+    def acknowledge(self, alert_id: str, username: str, now: float | None = None) -> dict | None: ...
     def recent_alerts(self, limit: int = 20) -> list[dict]: ...
     def recent_incidents(self, limit: int = 50) -> list[dict]: ...
     def history(self, zone_id: str, limit: int = 150) -> list[dict]: ...
@@ -129,6 +131,8 @@ def alert_dict(alert_id: int | str | None, event: AlertEvent, incident_id: int |
         "id": alert_id, "zone_id": event.zone_id, "risk_level": str(event.level), "message": event.text,
         "timestamp": event.triggered_at, "incident_id": incident_id,
         "delivered": any(d["delivered"] for d in deliveries), "deliveries": deliveries,
+        "hotspot": event.hotspot, "gate_actions": list(event.actions),
+        "acknowledged_by": None, "acknowledged_at": None,
     }
 
 
@@ -176,6 +180,13 @@ class MemoryStore:
         incident = self._open.get(event.zone_id)
         alert = alert_dict(next(self._alert_ids), event, incident.id if incident else None)
         self._alerts.append(alert)
+        return alert
+
+    def acknowledge(self, alert_id: str, username: str, now: float | None = None) -> dict | None:
+        """Mark an alert as handled by `username`; the first acknowledgement stands. None if unknown."""
+        alert = next((a for a in self._alerts if str(a["id"]) == str(alert_id)), None)
+        if alert is not None and alert["acknowledged_at"] is None:
+            alert["acknowledged_by"], alert["acknowledged_at"] = username, time.time() if now is None else now
         return alert
 
     def recent_alerts(self, limit: int = 20) -> list[dict]:
@@ -253,6 +264,7 @@ class MongoStore:
         self.retry_s = retry_s
         self._queue: queue.Queue[Callable[[], object] | None] = queue.Queue(max_queued)
         self._unreachable = False
+        self._alert_cache: OrderedDict[str, dict] = OrderedDict()  # recent alerts, for acknowledging at once
         self._writer = threading.Thread(target=self._write_loop, name="mongo-writer", daemon=True)
         self._writer.start()
 
@@ -339,8 +351,34 @@ class MongoStore:
         doc = {"_id": oid, "zone_id": event.zone_id,
                "incident_id": self._object_id(incident.id) if incident else None,
                "risk_level": alert["risk_level"], "message": event.text, "triggered_at": to_datetime(event.triggered_at),
-               "delivered": alert["delivered"], "deliveries": alert["deliveries"], "model_kind": self.model_kind}
+               "delivered": alert["delivered"], "deliveries": alert["deliveries"], "model_kind": self.model_kind,
+               "hotspot": alert["hotspot"], "gate_actions": alert["gate_actions"],
+               "acknowledged_by": None, "acknowledged_at": None}
         self._submit(lambda: self.db.alerts.insert_one(doc))
+        self._alert_cache[alert["id"]] = alert
+        while len(self._alert_cache) > 500:
+            self._alert_cache.popitem(last=False)
+        return alert
+
+    def acknowledge(self, alert_id: str, username: str, now: float | None = None) -> dict | None:
+        """Mark an alert as handled. The update goes through the write queue, after the alert's own
+        insert, so acknowledging an alert that is still being saved works too."""
+        from bson.errors import InvalidId
+
+        alert = self._alert_cache.get(alert_id)
+        if alert is None:
+            try:
+                doc = self.db.alerts.find_one(self._visible({"_id": self._object_id(alert_id)}))
+            except InvalidId:
+                return None
+            if doc is None:
+                return None
+            alert = self._alert(doc)
+        if alert["acknowledged_at"] is None:
+            when = time.time() if now is None else now
+            alert["acknowledged_by"], alert["acknowledged_at"] = username, when
+            oid, fields = self._object_id(alert_id), {"acknowledged_by": username, "acknowledged_at": to_datetime(when)}
+            self._submit(lambda: self.db.alerts.update_one({"_id": oid, "acknowledged_at": None}, {"$set": fields}))
         return alert
 
     def flush(self) -> None:
@@ -371,7 +409,10 @@ class MongoStore:
         return {"id": str(d["_id"]), "zone_id": d["zone_id"], "risk_level": d["risk_level"], "message": d["message"],
                 "timestamp": _utc(d["triggered_at"]).timestamp(),
                 "incident_id": str(d["incident_id"]) if d.get("incident_id") else None,
-                "delivered": d["delivered"], "deliveries": d["deliveries"]}
+                "delivered": d["delivered"], "deliveries": d["deliveries"],
+                "hotspot": d.get("hotspot"), "gate_actions": d.get("gate_actions", []),
+                "acknowledged_by": d.get("acknowledged_by"),
+                "acknowledged_at": _utc(d["acknowledged_at"]).timestamp() if d.get("acknowledged_at") else None}
 
     @staticmethod
     def _time_range(since: float | None, until: float | None) -> dict:

@@ -8,6 +8,7 @@ import ReportsPage from "./components/ReportsPage.jsx";
 import StatusNotice from "./components/StatusNotice.jsx";
 import VideoPage from "./components/VideoPage.jsx";
 import ZoneGrid from "./components/ZoneGrid.jsx";
+import { RedAlertBanner, activeRedAlerts } from "./cc/AlertFeed.jsx";
 import CommandCentre from "./cc/CommandCentre.jsx";
 import TopBar from "./cc/TopBar.jsx";
 
@@ -17,7 +18,7 @@ const ZoneDetail = lazy(() => import("./components/ZoneDetail.jsx"));
 const VideoReport = lazy(() => import("./components/VideoReport.jsx"));
 import { activeBanners } from "./liveState.js";
 import { displayLevel, sortZones } from "./risk.js";
-import { useAlertSound } from "./sound.js";
+import { useAlertSound, useRepeatingSiren } from "./sound.js";
 import { useHashRoute } from "./useHashRoute.js";
 import { useLiveZones, useZoneFeed } from "./useLiveZones.js";
 import { useVideoJobs } from "./useVideoJobs.js";
@@ -45,6 +46,9 @@ function Workspace({ user, onLogout }) {
   const [ccSelected, setCcSelected] = useState(null);
   const allowed = user.role === "admin" || !ADMIN_PAGES.has(route.page);
   const zones = sortZones(Object.values(live.state.zones), live.now, live.connection === "live");
+  const zoneNames = Object.fromEntries(zones.map((z) => [z.id, z.name]));
+  // An unacknowledged RED alert repeats the siren every 30 s (the classic view keeps its old behaviour).
+  useRepeatingSiren(route.page !== "classic" && activeRedAlerts(live.state.alerts, live.now).length > 0, sound);
 
   if (route.page === "classic") {
     return <ClassicView live={live} user={user} onLogout={onLogout} sound={sound} />;
@@ -52,6 +56,7 @@ function Workspace({ user, onLogout }) {
   return (
     <div className="min-h-screen bg-navy-950 font-body text-slate-100">
       <TopBar connection={live.connection} now={live.now} user={user} onLogout={onLogout} sound={sound} page={route.page} />
+      <RedAlertBanner alerts={live.state.alerts} zoneNames={zoneNames} onAcknowledge={live.acknowledge} now={live.now} sound={sound} />
       {route.page === "live" && <CommandCentre live={live} selectedId={ccSelected} onSelect={setCcSelected} />}
       {route.page !== "live" && (
         <div className="min-h-[calc(100vh-4rem)] bg-slate-100 font-sans text-slate-900">

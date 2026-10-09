@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { API_URL } from "../api.js";
 import { formatTime } from "../format.js";
 import { sortZones } from "../risk.js";
+import AlertFeed from "./AlertFeed.jsx";
 import GhatMap from "./GhatMap.jsx";
 import KpiStrip from "./KpiStrip.jsx";
 import { computeKpis } from "./kpi.js";
@@ -36,7 +37,7 @@ function Notices({ backend, connection, lastUpdate }) {
 
 /** The Command Centre: live KPIs, the zones, and the selected zone's details. */
 export default function CommandCentre({ live, selectedId, onSelect }) {
-  const { state, now, connection, backend, loadHistory } = live;
+  const { state, now, connection, backend, loadHistory, acknowledge } = live;
   const connected = connection === "live";
   const zones = sortZones(Object.values(state.zones), now, connected);
   const kpis = computeKpis({ zones, alerts: state.alerts, health: backend.health, now, connected });
@@ -64,6 +65,7 @@ export default function CommandCentre({ live, selectedId, onSelect }) {
           <div className="min-w-0 space-y-3">
             <GhatMap zones={zones} now={now} connected={connected} thresholds={backend.config?.thresholds}
               selectedId={selectedId} onSelect={onSelect} />
+            <AlertFeed alerts={state.alerts} zoneNames={Object.fromEntries(zones.map((z) => [z.id, z.name]))} onAcknowledge={acknowledge} />
             <ZoneList zones={zones} now={now} connected={connected} selectedId={selectedId} onSelect={onSelect} />
           </div>
           <aside aria-label="Selected zone"

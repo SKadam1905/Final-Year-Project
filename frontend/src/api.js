@@ -142,6 +142,7 @@ export const api = {
   recentAlerts: (limit = 50) => getJson(`/api/alerts/recent?limit=${limit}`),
   history: (zoneId, limit = 150) => getJson(`${zonePath(zoneId)}/history?limit=${limit}`),
   siteMap: () => getJson("/api/site-map"),
+  ackAlert: (alertId) => sendJson("POST", `/api/alerts/${encodeURIComponent(alertId)}/ack`),
 };
 
 // Video analysis (backend/app/video_api.py). A job is

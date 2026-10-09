@@ -155,6 +155,8 @@ class AlertEvent:
     triggered_at: float
     deliveries: tuple[Delivery, ...]
     route: tuple[str, ...] = ()
+    hotspot: dict | None = None  # the zone's most crowded grid cell when the alert fired
+    actions: tuple[str, ...] = ()  # the gate actions sent with it (app.gate_actions)
 
 
 class AlertDispatcher:
@@ -173,4 +175,5 @@ class AlertDispatcher:
         text = self.prefix + format_alert(status, zone_name, route, actions)
         deliveries = tuple(d for channel in self.channels for d in channel.send(text))
         self.policy.record(status.zone_id, status.level, status.timestamp)
-        return AlertEvent(status.zone_id, status.level, text, status.timestamp, deliveries, tuple(route or ()))
+        return AlertEvent(status.zone_id, status.level, text, status.timestamp, deliveries, tuple(route or ()),
+                          status.hotspot, tuple(actions or ()))

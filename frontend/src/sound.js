@@ -94,6 +94,13 @@ export function useAlertSound(alerts, AudioContextClass = globalThis.AudioContex
     playTone(ctx.current); // confirms that sound works
   }, [AudioContextClass, supported]);
 
+  /** Play a level's sound now (used to repeat the RED siren); silent until enabled, and while muted. */
+  const play = useCallback((level) => {
+    if (!enabled || muted || !ctx.current) return;
+    if (level === "RED") playSiren(ctx.current);
+    else playTone(ctx.current);
+  }, [enabled, muted]);
+
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       saveMuted(!m);
@@ -101,5 +108,15 @@ export function useAlertSound(alerts, AudioContextClass = globalThis.AudioContex
     });
   }, []);
 
-  return { supported, enabled, muted, enable, toggleMute };
+  return { supported, enabled, muted, enable, toggleMute, play };
+}
+
+/** While `active` (an unacknowledged RED alert), sound the siren again every `everyMs`. */
+export function useRepeatingSiren(active, sound, everyMs = 30_000) {
+  const play = sound?.play;
+  useEffect(() => {
+    if (!active || !play) return undefined;
+    const timer = setInterval(() => play("RED"), everyMs);
+    return () => clearInterval(timer);
+  }, [active, play, everyMs]);
 }

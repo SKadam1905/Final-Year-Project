@@ -42,9 +42,17 @@ describe("buildMapModel", () => {
   it("draws the backend's best route for the selected zone, and nothing when its data is stale", () => {
     const zones = [zone("cam1", "N", "GREEN", 1)];
     const m = buildMapModel({ siteMap: SITE, zones, now: NOW, connected: true, thresholds: T, selectedId: "cam1" });
-    expect(m.route).toEqual({ gate: "X", path: ["N", "G", "X"], points: [[100, 100], [200, 100], [300, 100]] });
+    expect(m.route).toEqual({ gate: "X", path: ["N", "G", "X"], points: [[100, 100], [200, 100], [300, 100]], throughTest: false });
     const stale = buildMapModel({ siteMap: SITE, zones, now: NOW, connected: false, thresholds: T, selectedId: "cam1" });
     expect(stale.route).toBeNull();
     expect(stale.nodes.find((x) => x.id === "N").level).toBe("NO SIGNAL");
+  });
+
+  it("marks test-video nodes and a live route that passes one", () => {
+    const zones = [zone("cam1", "N", "GREEN", 1), zone("video1", "G", "RED", 7, { kind: "video" })];
+    const m = buildMapModel({ siteMap: SITE, zones, now: NOW, connected: true, thresholds: T, selectedId: "cam1" });
+    expect(m.nodes.find((x) => x.id === "G").test).toBe(true);
+    expect(m.nodes.find((x) => x.id === "N").test).toBe(false);
+    expect(m.route.throughTest).toBe(true); // N -> G -> X passes the test camera's node
   });
 });
