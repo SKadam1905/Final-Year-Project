@@ -1,12 +1,14 @@
 import csv
 
+import cv2
 import numpy as np
 import pytest
 
+from app.image_io import write_image
 from ml.annotations import load_points_json
 from tests.conftest import write_video
 from tests.test_annotations import CVAT_XML
-from tools.annotate_points import View, nearest_point
+from tools.annotate_points import Annotator, View, nearest_point, roi_from_drag
 from tools.cvat_to_points import main as cvat_main
 from tools.extract_frames import extract_frames
 
@@ -27,6 +29,45 @@ def test_nearest_point():
     assert nearest_point(points, 48, 47, max_dist=5) == 1
     assert nearest_point(points, 30, 30, max_dist=5) is None
     assert nearest_point([], 0, 0, max_dist=5) is None
+
+
+def test_roi_from_drag_normalises_and_clips():
+    assert roi_from_drag(50, 40, 10, 5, w=64, h=48) == (10, 5, 50, 40)
+    assert roi_from_drag(-5, -5, 70, 60, w=64, h=48) == (0, 0, 64, 48)
+    assert roi_from_drag(10, 10, 12, 30, w=64, h=48) is None  # narrower than min_size
+
+
+def test_annotator_roi_flow(tmp_path, monkeypatch):
+    shown = []
+    monkeypatch.setattr(cv2, "imshow", lambda _name, canvas: shown.append(canvas))
+    frame = tmp_path / "frames" / "f.png"
+    write_image(frame, np.full((80, 100, 3), 200, np.uint8))
+    out = tmp_path / "annotations"
+    ann = Annotator([frame], out, "vid", window=(200, 160))  # fit scale 2: image = window / 2
+    click = lambda event, x, y, flags=0: ann.on_mouse(event, x, y, flags, None)
+
+    click(cv2.EVENT_LBUTTONDOWN, 150, 150)  # head at image (75.25, 75.25), before any ROI
+    ann.toggle_roi_drawing()
+    click(cv2.EVENT_LBUTTONDOWN, 20, 20)
+    click(cv2.EVENT_MOUSEMOVE, 100, 80, cv2.EVENT_FLAG_LBUTTON)
+    click(cv2.EVENT_LBUTTONUP, 100, 80)
+    assert ann.roi is None and "1 heads would be outside" in ann.message  # never drops a head silently
+
+    ann.on_mouse(cv2.EVENT_RBUTTONDOWN, 150, 150, 0, None)
+    click(cv2.EVENT_LBUTTONDOWN, 20, 20)
+    click(cv2.EVENT_LBUTTONUP, 100, 80)
+    assert ann.roi == pytest.approx((10.25, 10.25, 50.25, 40.25)) and not ann.drawing_roi
+
+    click(cv2.EVENT_LBUTTONDOWN, 180, 150)  # outside the ROI: ignored
+    click(cv2.EVENT_LBUTTONDOWN, 60, 60)  # inside: image (30.25, 30.25)
+    saved = load_points_json(out / "f.json")
+    assert saved.roi == pytest.approx((10.25, 10.25, 50.25, 40.25))
+    np.testing.assert_allclose(saved.points, [[30.25, 30.25]])
+    ann.render()
+    assert shown[-1][50, 50, 0] == 200 and shown[-1][150, 180, 0] == 80  # [row, col]: outside the ROI is dimmed
+
+    ann.set_roi(None)
+    assert load_points_json(out / "f.json").roi is None
 
 
 def test_extract_frames_at_requested_rate(tmp_path):

@@ -102,7 +102,11 @@ def find_point_json(frames_root: Path, annotations_root: Path) -> list[RawItem]:
     items = []
     for ann_path in sorted(annotations_root.glob("*/*.json")):
         video = ann_path.parent.name
-        image = frames_root / video / json.loads(ann_path.read_text(encoding="utf-8"))["image"]
+        data = json.loads(ann_path.read_text(encoding="utf-8"))
+        if data.get("roi"):  # only part of the frame is annotated: unusable as a whole-frame density target
+            print(f"skipping {ann_path}: annotated inside an ROI only")
+            continue
+        image = frames_root / video / data["image"]
         if not image.exists():
             raise FileNotFoundError(f"{ann_path} refers to missing frame {image}")
         items.append(RawItem(f"{video}_{ann_path.stem}", "train", image, ann_path, "json", video))

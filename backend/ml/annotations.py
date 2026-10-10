@@ -4,7 +4,9 @@
 * UCF-QNRF     - img_<n>_ann.mat holding annPoints
 * CVAT         - "CVAT for images 1.1" XML export with Points shapes
 * Ours         - one JSON per frame, written by tools/annotate_points.py and
-                 tools/cvat_to_points.py: annotations/<video>/<frame>.json
+                 tools/cvat_to_points.py: annotations/<video>/<frame>.json. An optional
+                 "roi" [x0, y0, x1, y1] means only that rectangle was annotated (used for
+                 evaluation frames too dense to annotate completely).
 """
 
 from __future__ import annotations
@@ -37,20 +39,27 @@ class PointAnnotation:
     width: int
     height: int
     points: np.ndarray  # (N, 2) x, y in pixels
+    roi: tuple[float, float, float, float] | None = None  # x0, y0, x1, y1; None = whole frame annotated
+
+
+def in_roi(points: np.ndarray, roi: tuple[float, float, float, float] | None) -> np.ndarray:
+    """Boolean mask of the points inside roi (half-open [x0, x1) x [y0, y1)); all True when roi is None."""
+    points = np.asarray(points, np.float64).reshape(-1, 2)
+    if roi is None:
+        return np.ones(len(points), bool)
+    x0, y0, x1, y1 = roi
+    return (points[:, 0] >= x0) & (points[:, 0] < x1) & (points[:, 1] >= y0) & (points[:, 1] < y1)
 
 
 def save_points_json(path: str | Path, ann: PointAnnotation) -> None:
     """Write atomically, so a crash mid-save never leaves a half-written file."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {
-        "image": ann.image,
-        "video": ann.video,
-        "width": ann.width,
-        "height": ann.height,
-        "count": int(len(ann.points)),
-        "points": [[round(float(x), 2), round(float(y), 2)] for x, y in np.asarray(ann.points).reshape(-1, 2)],
-    }
+    data = {"image": ann.image, "video": ann.video, "width": ann.width, "height": ann.height}
+    if ann.roi is not None:
+        data["roi"] = [round(float(v), 2) for v in ann.roi]
+    data["count"] = int(len(ann.points))
+    data["points"] = [[round(float(x), 2), round(float(y), 2)] for x, y in np.asarray(ann.points).reshape(-1, 2)]
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
     os.replace(tmp, path)
@@ -64,6 +73,7 @@ def load_points_json(path: str | Path) -> PointAnnotation:
         width=int(data["width"]),
         height=int(data["height"]),
         points=np.asarray(data["points"], np.float64).reshape(-1, 2),
+        roi=tuple(float(v) for v in data["roi"]) if data.get("roi") else None,
     )
 
 

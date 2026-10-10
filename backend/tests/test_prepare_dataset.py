@@ -98,3 +98,18 @@ def test_prepare_downscales_to_max_side(tmp_path, rng):
     for s in read_index(out):
         assert (s.width, s.height) == (200, 152)
         assert np.load(s.density).sum() == pytest.approx(2.0, abs=1e-3)
+
+
+def test_prepare_india_skips_roi_annotations(tmp_path, rng, capsys):
+    frames, annotations = tmp_path / "frames", tmp_path / "annotations"
+    for video in ("v1", "v2"):
+        write_image(frames / video / "f.jpg", make_image(rng, 160, 90))
+        save_points_json(annotations / video / "f.json", PointAnnotation("f.jpg", video, 160, 90, np.array([[5.0, 5.0]])))
+    write_image(frames / "v1" / "g.jpg", make_image(rng, 160, 90))
+    save_points_json(annotations / "v1" / "g.json",
+                     PointAnnotation("g.jpg", "v1", 160, 90, np.array([[5.0, 5.0]]), roi=(0, 0, 80, 45)))
+    out = tmp_path / "processed"
+    prepare_main(["india", "--root", str(frames), "--out", str(out), "--test-videos", "v2",
+                  "--val-fraction", "0", "--workers", "1"])
+    assert sorted(s.id for s in read_index(out)) == ["v1_f", "v2_f"]
+    assert "annotated inside an ROI only" in capsys.readouterr().out

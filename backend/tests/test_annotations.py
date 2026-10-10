@@ -4,6 +4,7 @@ from scipy.io import savemat
 
 from ml.annotations import (
     PointAnnotation,
+    in_roi,
     load_points_json,
     load_qnrf_mat,
     load_shanghaitech_mat,
@@ -40,6 +41,18 @@ def test_points_json_roundtrip(tmp_path):
     assert (ann.image, ann.video, ann.width, ann.height) == ("frame_0001.jpg", "vid", 640, 360)
     np.testing.assert_allclose(ann.points, [[1.23, 5.68], [9, 10]])
     assert not list(path.parent.glob("*.tmp"))
+
+
+def test_points_json_roi_roundtrip_and_mask(tmp_path):
+    path = tmp_path / "f.json"
+    points = np.array([[5.0, 5.0], [15.0, 5.0], [10.0, 20.0]])
+    save_points_json(path, PointAnnotation("f.jpg", "v", 40, 30, points, roi=(0, 0, 15, 10)))
+    ann = load_points_json(path)
+    assert ann.roi == (0, 0, 15, 10)
+    assert in_roi(ann.points, ann.roi).tolist() == [True, False, False]  # half-open: x = 15 is outside
+    assert in_roi(ann.points, None).all()
+    save_points_json(path, PointAnnotation("f.jpg", "v", 40, 30, points))
+    assert load_points_json(path).roi is None and "roi" not in path.read_text(encoding="utf-8")
 
 
 def test_empty_points_json(tmp_path):
