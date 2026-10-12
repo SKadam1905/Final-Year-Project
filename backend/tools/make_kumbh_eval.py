@@ -10,8 +10,13 @@ channel watermark in the top-right corner remains. Shot types: aerial (drone, to
 wide (crowd to the horizon), medium (people at mid-distance), close (a few large people).
 
 The set lives outside data/india_dataset on purpose, so prepare_dataset never trains on it.
-Annotate with:
+Ground truth, either way (see ml.kumbh_eval):
+    python -m tools.count_eval          # count heads per cell of a 3x3 grid (counts.csv)
     python -m tools.annotate_points ../data/eval/frames/kumbh_eval --out ../data/eval/annotations/kumbh_eval
+
+At 640x360 not every part of every frame can be read (checked by eye with contrast enhancement
+and zoom, 2026-10-12): COUNT_REGIONS lists the part of a frame to count where the rest is too
+small, dense or hazy to make out heads; frames not listed are counted whole.
 """
 
 from __future__ import annotations
@@ -51,6 +56,18 @@ PICKS = [  # (source, time_s, enclosing shot "start-end" in s, shot type)
     ("pti_prayagraj", 64.1, "62.1-66.1", "close"),
     ("pti_prayagraj", 93.0, "91.6-94.5", "close"),
 ]
+
+COUNT_REGIONS = {  # frame -> (x0, y0, x1, y1) in source pixels: the readable part to count
+    "frame_01.png": (100, 0, 205, 360),  # aerial: sand strip between the pontoon and the dense crowd
+    "frame_02.png": (0, 0, 250, 85),  # aerial: sand at the top left, clear of the crowd's edge
+    "frame_04.png": (300, 120, 410, 360),  # aerial: bathers in the water between the crowd and the boats
+    "frame_05.png": (0, 230, 640, 360),  # wide: near and middle crowd; the band at the horizon is unreadable
+    "frame_06.png": (0, 200, 640, 360),  # wide: foreground and bathers; the far boats and bank excluded
+    "frame_07.png": (0, 230, 640, 360),  # wide: lower band, as frame 05
+    "frame_08.png": (0, 185, 640, 360),  # medium: near crowd; the hazy background excluded
+    "frame_09.png": (280, 140, 640, 360),  # medium, night: the standing crowd right of the ambulance
+}
+# frame_03.png (dense aerial crowd in haze) is unreadable throughout: mark it so (s) rather than count it.
 
 
 def find_source(videos_dir: Path, prefix: str) -> Path:
