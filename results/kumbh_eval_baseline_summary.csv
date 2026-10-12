@@ -1,4 +1,16 @@
 method,shot_type,frames,true_heads,MAE,relative error %,ms per frame
-CSRNet,aerial,3,179,54.1,90.7,107.3
-YOLO,aerial,3,179,59.7,100.0,49.3
-hybrid,aerial,3,179,54.1,90.7,156.7
+CSRNet,aerial,3,154.5,46.0,89.3,116.2
+CSRNet,close,4,48,14.1,117.6,116.2
+CSRNet,medium,4,83,6.5,31.2,116.2
+CSRNet,wide,3,139,7.0,15.1,116.2
+CSRNet,all,14,424.5,17.2,56.8,116.2
+YOLO,aerial,3,154.5,51.5,100.0,37.8
+YOLO,close,4,48,3.5,29.2,37.8
+YOLO,medium,4,83,7.0,33.7,37.8
+YOLO,wide,3,139,39.3,84.9,37.8
+YOLO,all,14,424.5,22.5,74.1,37.8
+hybrid,aerial,3,154.5,46.0,89.3,153.9
+hybrid,close,4,48,3.5,29.2,153.9
+hybrid,medium,4,83,4.8,23.3,153.9
+hybrid,wide,3,139,7.0,15.1,153.9
+hybrid,all,14,424.5,13.7,45.3,153.9

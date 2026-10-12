@@ -1,0 +1,46 @@
+variant,shot_type,frames,true_heads,MAE,relative_error_pct,bias_pct,ms_per_frame
+CSRNet 1x,aerial,3,154.5,46.0,89.3,-89.3,135.6
+CSRNet 1x,close,4,48,14.1,117.6,117.6,135.6
+CSRNet 1x,medium,4,83,6.5,31.2,3.0,135.6
+CSRNet 1x,wide,3,139,7.0,15.1,4.1,135.6
+CSRNet 1x,all,14,424.5,17.2,56.8,-17.3,135.6
+CSRNet 2x,aerial,3,154.5,46.2,89.6,-89.6,467.4
+CSRNet 2x,close,4,48,22.9,190.8,190.8,467.4
+CSRNet 2x,medium,4,83,3.2,15.6,-2.9,467.4
+CSRNet 2x,wide,3,139,9.6,20.8,-20.8,467.4
+CSRNet 2x,all,14,424.5,19.4,64.1,-18.4,467.4
+CSRNet 3x,aerial,3,154.5,45.6,88.6,-88.6,1138.3
+CSRNet 3x,close,4,48,28.2,235.4,235.4,1138.3
+CSRNet 3x,medium,4,83,2.6,12.4,1.0,1138.3
+CSRNet 3x,wide,3,139,14.7,31.7,-31.7,1138.3
+CSRNet 3x,all,14,424.5,21.7,71.7,-15.8,1138.3
+YOLO,aerial,3,154.5,51.5,100.0,-100.0,54.1
+YOLO,close,4,48,3.5,29.2,-20.8,54.1
+YOLO,medium,4,83,7.0,33.7,-33.7,54.1
+YOLO,wide,3,139,39.3,84.9,-84.9,54.1
+YOLO,all,14,424.5,22.5,74.1,-73.1,54.1
+YOLO sliced,aerial,3,154.5,51.5,100.0,-100.0,539.6
+YOLO sliced,close,4,48,3.0,25.0,-20.8,539.6
+YOLO sliced,medium,4,83,4.8,22.9,-14.5,539.6
+YOLO sliced,wide,3,139,24.0,51.8,-51.8,539.6
+YOLO sliced,all,14,424.5,18.4,60.7,-58.5,539.6
+hybrid (pretrained),aerial,3,154.5,46.0,89.3,-89.3,189.7
+hybrid (pretrained),close,4,48,3.5,29.2,-20.8,189.7
+hybrid (pretrained),medium,4,83,4.8,23.3,8.9,189.7
+hybrid (pretrained),wide,3,139,7.0,15.1,4.1,189.7
+hybrid (pretrained),all,14,424.5,13.7,45.3,-31.8,189.7
+hybrid 1x + sliced,aerial,3,154.5,46.0,89.3,-89.3,656.8
+hybrid 1x + sliced,close,4,48,3.0,25.0,-20.8,656.8
+hybrid 1x + sliced,medium,4,83,4.3,20.9,19.7,656.8
+hybrid 1x + sliced,wide,3,139,7.0,15.1,4.1,656.8
+hybrid 1x + sliced,all,14,424.5,13.5,44.4,-29.7,656.8
+hybrid 2x + sliced,aerial,3,154.5,47.8,92.9,-92.9,998.5
+hybrid 2x + sliced,close,4,48,11.1,92.3,88.1,998.5
+hybrid 2x + sliced,medium,4,83,1.6,7.7,6.5,998.5
+hybrid 2x + sliced,wide,3,139,15.4,33.2,-33.2,998.5
+hybrid 2x + sliced,all,14,424.5,17.2,56.6,-33.5,998.5
+hybrid 3x + sliced,aerial,3,154.5,47.7,92.5,-92.5,1653.7
+hybrid 3x + sliced,close,4,48,11.8,98.2,94.0,1653.7
+hybrid 3x + sliced,medium,4,83,1.9,9.0,-0.6,1653.7
+hybrid 3x + sliced,wide,3,139,22.6,48.9,-48.9,1653.7
+hybrid 3x + sliced,all,14,424.5,19.0,62.5,-39.2,1653.7
