@@ -18,7 +18,7 @@ data/
 │   ├── raw_videos/             # pandharpur_01.mp4, ... (H.264); MediaMTX serves each at rtsp://localhost:8554/<name>
 │   ├── frames/<video>/         # frame_0001.jpg ... (tools.extract_frames)
 │   └── annotations/<video>/    # frame_0001.json head points (tools.annotate_points / tools.cvat_to_points)
-├── umn/                        # Crowd-Activity-All.avi + labels.csv (Phase 5, Part D)
+├── umn/                        # Crowd-Activity-All.avi + labels.csv (scripts/umn_labels.py) + checks/
 ├── test_clips/                 # synthetic_crowd_1280.mp4 (scripts/make_test_clip.py), untrained_csrnet.pth
 └── processed/<name>/           # output of ml.prepare_dataset: images/, density/, index.csv
 ```
@@ -50,16 +50,18 @@ data/
   Keep `--workers` at 2 on this 7.6 GB laptop; more workers ran out of memory.
 
 - **UCF-QNRF**: https://www.crcv.ucf.edu/data/ucf-qnrf/ (about 1.5 GB zip).
-- **UMN unusual crowd activity** (Part D, turbulence ROC). The lab's page
-  (http://mha.cs.umn.edu/proj_events.shtml) no longer offers a download or frame labels, so:
-  1. Get the video `Crowd-Activity-All.avi` (11 clips: 2 lawn, 6 indoor, 3 plaza scenes, each
-     starting with normal walking and ending with the crowd running away) from a mirror; search
-     Kaggle or GitHub for "UMN crowd activity dataset". Put it in `data\umn\`. Note in the thesis
-     where it came from.
-  2. Copy `scripts\umn_labels_template.csv` to `data\umn\labels.csv` and add one row per clip:
-     its first and last frame and the first frame where people start to run (0-based frame
-     numbers in the .avi; step through it in VLC or with `tools.extract_frames --fps 25`). If your
-     copy comes with published per-frame labels, use those transition frames instead and cite them.
-  3. Run `venv\Scripts\python.exe scripts\turbulence_roc.py` from the project root.
+- **UMN unusual crowd activity** (Phase 6B, turbulence validation). The video is still served by
+  the lab (checked 2026-10-13; 24.8 MB, 7739 frames, 30 fps, 320x240), linked from
+  http://mha.cs.umn.edu/proj_events.shtml. From the project root:
+
+  ```powershell
+  curl.exe -L -o data\umn\Crowd-Activity-All.avi https://mha.cs.umn.edu/Movies/Crowd-Activity-All.avi
+  venv\Scripts\python.exe scripts\umn_labels.py        # data\umn\labels.csv from the video's own caption
+  venv\Scripts\python.exe scripts\umn_validation.py    # results\umn_validation.md (~10 min, CPU)
+  ```
+
+  The ground truth is burnt into the video: a red "Abnormal Crowd Activity" caption from the
+  moment the authors mark each of the 11 clips (2 lawn, 6 indoor, 3 plaza) as panicking.
+  `umn_labels.py` reads it frame by frame; there is no separate label file to download.
 - **India festival videos**: YouTube via `yt-dlp` (see the main README). Record every video
   in `india_dataset/sources.csv` so the thesis can cite it.
