@@ -10,6 +10,8 @@ from ml.annotations import (
     load_shanghaitech_mat,
     parse_cvat_xml,
     save_points_json,
+    set_frame_status,
+    read_frame_status,
 )
 
 
@@ -89,3 +91,12 @@ def test_cvat_video_export_is_rejected(tmp_path):
     path.write_text("<annotations><track id='0' label='head'/></annotations>", encoding="utf-8")
     with pytest.raises(ValueError, match="CVAT for images"):
         parse_cvat_xml(path)
+
+
+def test_set_frame_status_creates_and_updates(tmp_path):
+    path = tmp_path / "frames.csv"
+    set_frame_status(path, "a.png", "unreadable", "haze, fog or glare")  # no file yet: created
+    set_frame_status(path, "b.png", "unreadable", "motion blur")
+    set_frame_status(path, "a.png", "")  # cleared
+    assert read_frame_status(path) == {"b.png": ("unreadable", "motion blur")}
+    assert not list(tmp_path.glob("*.tmp"))
