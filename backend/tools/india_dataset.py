@@ -150,6 +150,8 @@ def cmd_check(args, p: Paths) -> None:
     write_report(p.results / "india_intake", rows, "India dataset intake (raw_videos vs sources.csv)", notes)
     print(f"\n{'OK' if report.ok else 'NOT OK'}: {len(report.videos)} videos, {len(locations)} locations "
           f"-> {p.results / 'india_intake.md'}")
+    if not report.videos:
+        print("No dataset videos yet: put them in raw_videos/<location>/<video>.mp4 and list each in sources.csv.")
     if not report.ok:
         raise SystemExit(1)
 
