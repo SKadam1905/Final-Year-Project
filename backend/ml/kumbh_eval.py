@@ -2,12 +2,14 @@
 
 A frame's ground truth is a head count inside a region (the whole frame when none). It comes from
 one of two human annotations in the annotations folder:
-  * counts.csv (tools.count_eval): heads counted by a person per cell of a 3x3 grid over the region;
-    only rows with all nine cells entered are used. No head positions, so with this ground truth only
-    the count error is measured: point-level localisation is not evaluated.
+  * counts_<annotator>.csv (tools.count_eval --annotator <name>): heads counted per cell of a 3x3
+    grid over the region, one file per person. Only rows with all nine cells entered are used; the
+    frame's count is the mean of every annotator's total (all must have counted the same region).
+    No head positions, so with this ground truth only the count error is measured: point-level
+    localisation is not evaluated.
   * <frame>.json (tools.annotate_points): clicked head points; the count is the points inside the
     optional ROI.
-When a frame has both, counts.csv wins and the point file is reported as ignored. Frames marked
+When a frame has both, the counts win and the point file is reported as ignored. Frames marked
 unreadable in frames.csv are left out. Models are scored on the same region: density summed over
 the map cells whose centres lie in it, detections counted by their head position.
 
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +34,8 @@ from ml.annotations import UNREADABLE, in_roi, load_points_json, read_frame_stat
 GRID = 3  # cells per side
 CELLS = [f"cell_{k}" for k in range(1, GRID * GRID + 1)]  # row by row, cell_1 = top left
 COUNT_FIELDS = ["frame", "x0", "y0", "x1", "y1", "grid", *CELLS, "total", "complete", "updated"]
-COUNTS_NAME = "counts.csv"
+LEGACY_COUNTS = "counts.csv"  # before per-annotator files; renamed to counts_shubham.csv on 2026-10-12
+ANNOTATOR = re.compile(r"^[a-z0-9_-]+$")
 
 Region = tuple[float, float, float, float]  # x0, y0, x1, y1 in source pixels
 
@@ -45,6 +49,7 @@ class GroundTruth:
     source: str  # "counts" or "points"
     width: int
     height: int
+    annotators: tuple[tuple[str, float], ...] = ()  # (name, total) behind a "counts" count
 
 
 def cell_rects(region: Region, grid: int = GRID) -> list[Region]:
@@ -53,6 +58,21 @@ def cell_rects(region: Region, grid: int = GRID) -> list[Region]:
     xs = [x0 + (x1 - x0) * i / grid for i in range(grid + 1)]
     ys = [y0 + (y1 - y0) * j / grid for j in range(grid + 1)]
     return [(xs[i], ys[j], xs[i + 1], ys[j + 1]) for j in range(grid) for i in range(grid)]
+
+
+def counts_path(annotations_dir: str | Path, annotator: str) -> Path:
+    """data/eval/annotations/kumbh_eval/counts_<annotator>.csv; names are lowercase letters, digits, _ and -."""
+    if not ANNOTATOR.match(annotator):
+        raise ValueError(f"annotator name {annotator!r}: use lowercase letters, digits, _ and - (e.g. rohit)")
+    return Path(annotations_dir) / f"counts_{annotator}.csv"
+
+
+def read_annotator_counts(annotations_dir: str | Path) -> dict[str, dict[str, dict]]:
+    """annotator -> frame -> counts row, from every counts_<annotator>.csv in the folder."""
+    annotations_dir = Path(annotations_dir)
+    if (annotations_dir / LEGACY_COUNTS).exists():
+        raise ValueError(f"{annotations_dir / LEGACY_COUNTS} has no annotator: rename it to counts_<name>.csv")
+    return {path.stem[len("counts_"):]: read_counts(path) for path in sorted(annotations_dir.glob("counts_*.csv"))}
 
 
 def read_counts(path: str | Path) -> dict[str, dict]:
@@ -90,30 +110,59 @@ def load_ground_truth(frames_dir: str | Path, annotations_dir: str | Path) -> tu
     with open(frames_dir / "frames.csv", newline="", encoding="utf-8-sig") as f:
         manifest = {r["frame"]: r for r in csv.DictReader(f)}
     status = read_frame_status(frames_dir / "frames.csv")
-    counts = read_counts(annotations_dir / COUNTS_NAME)
+    by_annotator = read_annotator_counts(annotations_dir)
     truth, notes = [], []
     for frame, info in sorted(manifest.items()):
         w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+        shot = info.get("shot_type", "")
         points_file = annotations_dir / f"{Path(frame).stem}.json"
         if status.get(frame, ("",))[0] == UNREADABLE:
             notes.append(f"{frame}: left out, marked unreadable ({status[frame][1]})")
             continue
-        row = counts.get(frame)
-        if row and row.get("complete") == "yes":
-            region = tuple(float(row[k]) for k in ("x0", "y0", "x1", "y1"))
-            truth.append(GroundTruth(frame, info.get("shot_type", ""), float(row["total"]), region, "counts", w, h))
+        rows = {name: counts[frame] for name, counts in by_annotator.items() if frame in counts}
+        complete = {name: row for name, row in rows.items() if row.get("complete") == "yes"}
+        incomplete = sorted(set(rows) - set(complete))
+        if incomplete:
+            notes.append(f"{frame}: not finished by {', '.join(incomplete)} (not used)")
+        regions = {name: tuple(round(float(row[k])) for k in ("x0", "y0", "x1", "y1")) for name, row in complete.items()}
+        if len(set(regions.values())) > 1:
+            notes.append(f"{frame}: left out, annotators counted different regions "
+                         f"({'; '.join(f'{n}: {r}' for n, r in sorted(regions.items()))})")
+            continue
+        if complete:
+            first = next(iter(complete.values()))
+            region = tuple(float(first[k]) for k in ("x0", "y0", "x1", "y1"))
+            totals = tuple((name, float(row["total"])) for name, row in sorted(complete.items()))
+            count = sum(t for _, t in totals) / len(totals)
+            truth.append(GroundTruth(frame, shot, count, region, "counts", w, h, totals))
             if points_file.exists():
-                notes.append(f"{frame}: counts.csv used; the point file {points_file.name} is ignored")
+                notes.append(f"{frame}: counts used; the point file {points_file.name} is ignored")
         elif points_file.exists():
             ann = load_points_json(points_file)
             region = ann.roi or (0.0, 0.0, float(ann.width), float(ann.height))
             count = float(in_roi(ann.points, ann.roi).sum())
-            truth.append(GroundTruth(frame, info.get("shot_type", ""), count, region, "points", ann.width, ann.height))
-            if row:
-                notes.append(f"{frame}: counts.csv row incomplete, the point file is used")
+            truth.append(GroundTruth(frame, shot, count, region, "points", ann.width, ann.height))
         else:
-            notes.append(f"{frame}: left out, not annotated" + (" (counts incomplete)" if row else ""))
+            notes.append(f"{frame}: left out, not annotated")
     return truth, notes
+
+
+def agreement(truth: list[GroundTruth]) -> list[dict]:
+    """Per counted frame: each annotator's total, their mean, and the spread (max - min) / mean in %
+    ("" with a single annotator; for two people it is their % difference)."""
+    names = sorted({name for gt in truth for name, _ in gt.annotators})
+    rows = []
+    for gt in truth:
+        if gt.source != "counts":
+            continue
+        totals = dict(gt.annotators)
+        values = list(totals.values())
+        spread = 100 * (max(values) - min(values)) / gt.count if len(values) > 1 and gt.count else ""
+        rows.append({"frame": gt.frame, "shot_type": gt.shot_type,
+                     **{name: f"{totals[name]:g}" if name in totals else "-" for name in names},
+                     "mean": round(gt.count, 1), "annotators": len(values),
+                     "difference %": round(spread, 1) if spread != "" else "-"})
+    return rows
 
 
 def density_in_region(density: np.ndarray, frame_size: tuple[int, int], region: Region) -> float:

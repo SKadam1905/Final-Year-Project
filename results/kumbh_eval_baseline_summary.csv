@@ -1,4 +1,4 @@
 method,shot_type,frames,true_heads,MAE,relative error %,ms per frame
-CSRNet,aerial,3,179,54.1,90.7,106.8
-YOLO,aerial,3,179,59.7,100.0,34.5
-hybrid,aerial,3,179,54.1,90.7,141.3
+CSRNet,aerial,3,179,54.1,90.7,107.3
+YOLO,aerial,3,179,59.7,100.0,49.3
+hybrid,aerial,3,179,54.1,90.7,156.7

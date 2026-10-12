@@ -1,4 +1,4 @@
-frame,shot_type,"region (x0,y0,x1,y1)",true,CSRNet,CSRNet err %,YOLO,YOLO err %,hybrid,hybrid err %,hybrid uses
+frame,shot_type,"region (x0,y0,x1,y1)",true (annotators' mean),CSRNet,CSRNet err %,YOLO,YOLO err %,hybrid,hybrid err %,hybrid uses
 frame_01.png,aerial,"100,0,205,360",68,3.1,95.4,0.0,100.0,3.1,95.4,CSRNet
 frame_02.png,aerial,"0,0,250,85",68,5.9,91.3,0.0,100.0,5.9,91.3,CSRNet
 frame_04.png,aerial,"300,120,410,360",43,7.5,82.5,0.0,100.0,7.5,82.5,CSRNet

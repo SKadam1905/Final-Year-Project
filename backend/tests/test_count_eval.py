@@ -9,7 +9,8 @@ import pytest
 import tools.count_eval as count_eval
 from app.image_io import write_image
 from ml.annotations import PointAnnotation, read_frame_status, save_points_json, set_frame_status
-from ml.kumbh_eval import (boxes_in_region, cell_rects, density_in_region, load_ground_truth, read_counts, score)
+from ml.kumbh_eval import (agreement, boxes_in_region, cell_rects, counts_path, density_in_region, load_ground_truth,
+                           read_counts, score)
 from tools.count_eval import TOP, CountTool
 
 ENTER, BACKSPACE = 13, 8
@@ -23,7 +24,7 @@ def make_eval_set(tmp_path, n=3):
     with open(frames / "frames.csv", "w", newline="", encoding="utf-8") as f:
         f.write("frame,shot_type,width,height\n" + "".join(
             f"frame_{i:02d}.png,{'aerial' if i == 1 else 'close'},120,90\n" for i in range(1, n + 1)))
-    return frames, tmp_path / "annotations" / "counts.csv"
+    return frames, counts_path(tmp_path / "annotations", "shubham")
 
 
 def window_xy(tool, x, y):
@@ -118,15 +119,19 @@ def test_count_mode_never_loads_a_model():
         assert name not in source, f"tools.count_eval must not use {name}: the ground truth stays human"
 
 
+def count_frame(tool, values):
+    for v in values:
+        type_count(tool, str(v))
+
+
 def test_ground_truth_prefers_complete_counts_and_skips_unreadable(tmp_path):
     frames, counts = make_eval_set(tmp_path, n=4)
     annotations = counts.parent
     tool = CountTool(frames, counts, window=(240, 180), regions={"frame_01.png": (0, 30, 120, 90)})
-    for _ in range(9):
-        type_count(tool, "3")  # frame_01 complete: 27 heads in its region
+    count_frame(tool, [3] * 9)  # frame_01 complete: 27 heads in its region
     tool.handle_key(ord("n"))
     type_count(tool, "5")  # frame_02: one cell only, incomplete
-    save_points_json(annotations / "frame_01.json",  # stale points: ignored, counts.csv wins
+    save_points_json(annotations / "frame_01.json",  # stale points: ignored, the counts win
                      PointAnnotation("frame_01.png", "eval", 120, 90, np.array([[1.0, 1.0]])))
     save_points_json(annotations / "frame_03.json",
                      PointAnnotation("frame_03.png", "eval", 120, 90, np.array([[5.0, 5.0], [100.0, 80.0]]),
@@ -137,10 +142,54 @@ def test_ground_truth_prefers_complete_counts_and_skips_unreadable(tmp_path):
     truth, notes = load_ground_truth(frames, annotations)
     assert [(t.frame, t.count, t.source) for t in truth] == [("frame_01.png", 27, "counts"), ("frame_03.png", 1, "points")]
     assert truth[0].region == (0, 30, 120, 90) and truth[0].shot_type == "aerial"
-    assert truth[1].region == (0, 0, 60, 45)
+    assert truth[0].annotators == (("shubham", 27.0),) and truth[1].region == (0, 0, 60, 45)
     text = "\n".join(notes)
-    assert "frame_01.json is ignored" in text and "frame_02.png: left out, not annotated (counts incomplete)" in text
+    assert "frame_01.json is ignored" in text and "frame_02.png: not finished by shubham" in text
+    assert "frame_02.png: left out, not annotated" in text
     assert "frame_04.png: left out, marked unreadable (motion blur)" in text
+
+
+def test_each_annotator_counts_alone_and_the_truth_is_their_mean(tmp_path):
+    frames, mine = make_eval_set(tmp_path, n=3)
+    annotations = mine.parent
+    first = CountTool(frames, mine, window=(240, 180))
+    count_frame(first, [3] * 9)  # shubham: frame_01 = 27
+    first.handle_key(ord("n"))
+    count_frame(first, [2] * 9)  # shubham: frame_02 = 18
+
+    theirs = counts_path(annotations, "rohit")
+    second = CountTool(frames, theirs, window=(240, 180))
+    assert second.frame.name == "frame_01.png" and second.cells == [None] * 9  # never sees shubham's counts
+    assert "27" not in "".join(str(c) for c in second.cells)
+    count_frame(second, [4] * 9)  # rohit: frame_01 = 36
+    second.handle_key(ord("n"))
+    second.handle_key(ord("r"))
+    second.handle_key(ord("r"))  # rohit redraws frame_02's region: totals no longer comparable
+    second.on_mouse(cv2.EVENT_LBUTTONDOWN, *window_xy(second, 0, 0), 0, None)
+    second.on_mouse(cv2.EVENT_LBUTTONUP, *window_xy(second, 60, 60), 0, None)
+    count_frame(second, [1] * 9)
+    assert set(read_counts(mine)) == {"frame_01.png", "frame_02.png"}
+    assert read_counts(mine)["frame_01.png"]["total"] == "27"  # rohit's work never touched shubham's file
+
+    truth, notes = load_ground_truth(frames, annotations)
+    assert [(t.frame, t.count) for t in truth] == [("frame_01.png", 31.5)]
+    assert truth[0].annotators == (("rohit", 36.0), ("shubham", 27.0))
+    assert any("frame_02.png: left out, annotators counted different regions" in n for n in notes)
+    rows = agreement(truth)
+    assert rows == [{"frame": "frame_01.png", "shot_type": "aerial", "rohit": "36", "shubham": "27", "mean": 31.5,
+                     "annotators": 2, "difference %": round(100 * 9 / 31.5, 1)}]
+
+
+def test_annotator_names_and_the_old_unnamed_file(tmp_path):
+    assert counts_path(tmp_path, "rohit").name == "counts_rohit.csv"
+    for bad in ("Rohit", "rohit k", "../x", ""):
+        with pytest.raises(ValueError):
+            counts_path(tmp_path, bad)
+    frames, mine = make_eval_set(tmp_path, n=1)
+    mine.parent.mkdir(parents=True, exist_ok=True)
+    (mine.parent / "counts.csv").write_text("frame\n", encoding="utf-8")  # no annotator: refused, not ignored
+    with pytest.raises(ValueError, match="rename it to counts_<name>.csv"):
+        load_ground_truth(frames, mine.parent)
 
 
 def test_predictions_restricted_to_the_region_and_scored():

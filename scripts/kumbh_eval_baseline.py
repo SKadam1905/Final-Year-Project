@@ -2,9 +2,10 @@
 
     venv\\Scripts\\python.exe scripts\\kumbh_eval_baseline.py
 
-Ground truth: ml.kumbh_eval.load_ground_truth: complete rows of
-data/eval/annotations/kumbh_eval/counts.csv (heads counted by a person per cell of a 3x3 grid
-over the frame's counting region), else point files; frames marked unreadable are left out.
+Ground truth: ml.kumbh_eval.load_ground_truth: per frame, the mean of every annotator's complete
+row in data/eval/annotations/kumbh_eval/counts_<annotator>.csv (heads counted per cell of a 3x3
+grid over the frame's counting region), else point files; frames marked unreadable are left out.
+The report also shows how far the annotators agree on each frame.
 
 Models exactly as the live system runs them (settings from .env): CSRNet with CSRNET_WEIGHTS at
 INFER_MAX_WIDTH, YOLO person detection with YOLO_WEIGHTS / YOLO_IMGSZ / YOLO_CONF, and the hybrid
@@ -32,7 +33,7 @@ from app.csrnet_model import TRUSTED_KINDS, DensityEstimator  # noqa: E402
 from app.detector import load_detector  # noqa: E402
 from app.image_io import read_image  # noqa: E402
 from app.pipeline import choose_count  # noqa: E402
-from ml.kumbh_eval import boxes_in_region, density_in_region, load_ground_truth, score  # noqa: E402
+from ml.kumbh_eval import agreement, boxes_in_region, density_in_region, load_ground_truth, score  # noqa: E402
 
 FRAMES = DATA_DIR / "eval" / "frames" / "kumbh_eval"
 ANNOTATIONS = DATA_DIR / "eval" / "annotations" / "kumbh_eval"
@@ -92,7 +93,7 @@ def main() -> None:
     for i, gt in enumerate(truth):
         x0, y0, x1, y1 = gt.region
         row = {"frame": gt.frame, "shot_type": gt.shot_type, "region (x0,y0,x1,y1)": f"{x0:g},{y0:g},{x1:g},{y1:g}",
-               "true": f"{gt.count:g}"}
+               "true (annotators' mean)": f"{gt.count:g}"}
         for m in METHODS:
             f = scored[m][0][i]
             row[m] = f["predicted"]
@@ -123,6 +124,11 @@ def main() -> None:
         import torch
 
         device += f" ({torch.cuda.get_device_name(estimator.device)})"
+    agree = agreement(truth)
+    pairs = [float(r["difference %"]) for r in agree if r["difference %"] != "-"]
+    agreement_note = (f"Frames counted by two or more people: {len(pairs)} of {len(agree)}; mean difference "
+                      f"{sum(pairs) / len(pairs):.1f}%." if pairs else
+                      "Every frame so far has a single annotator, so agreement cannot be measured yet.")
     left_out = [n for n in notes if "left out" in n]
     other_notes = [n for n in notes if "left out" not in n]
     n = len(truth)
@@ -141,9 +147,15 @@ def main() -> None:
         "Each model is scored inside the frame's counting region; see the notes before reading the numbers.", "",
         "## Error per frame", "", *table(frame_rows), "",
         "## Error per shot type", "", *table(summary_rows), "",
+        "## Inter-annotator agreement", "",
+        *(table(agree) if agree else ["No frame counted with `tools.count_eval`."]), "",
+        "Each person's total for the frame's region, the mean used as the true count, and the difference: "
+        "(highest - lowest) / mean, which for two people is their % difference. " + agreement_note, "",
         "## Notes", "",
-        "- **Ground truth**: heads counted by a person per cell of a 3x3 grid over each frame's counting region "
-        "(`tools.count_eval`, `data/eval/annotations/kumbh_eval/counts.csv`); no model suggested any count.",
+        "- **Ground truth**: the mean of the annotators' totals; each person counted the heads per cell of a 3x3 grid "
+        "over the frame's counting region (`tools.count_eval --annotator <name>`, "
+        "`data/eval/annotations/kumbh_eval/counts_<name>.csv`), without seeing anyone else's counts; no model "
+        "suggested any count.",
         "- **Count error only**: the ground truth has no head positions, so point-level localisation is not "
         "evaluated. err % = |predicted - true| / true per frame; relative error % = sum |error| / sum true heads.",
         f"- **CSRNet**: {estimator.info['label']} At INFER_MAX_WIDTH={s.infer_max_width} (these 640x360 frames "
@@ -169,7 +181,7 @@ def main() -> None:
         lines.insert(4, f"> **Too little ground truth to compare methods in general.** Only {len(truth)} frame(s), "
                         f"all {', '.join(shots)}, are counted completely; the other shot types have no ground truth "
                         "yet, so this table says nothing about them, and nothing about dense crowds (the aerial "
-                        "regions are the sparse sand and water areas). Count more frames with `tools.count_eval` and "
+                        "regions are the sparse sand and water areas). Count more frames with `tools.count_eval --annotator <name>` and "
                         "run this again.\n")
     OUT.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"-> {OUT.with_suffix('.md')}")

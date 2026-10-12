@@ -1,7 +1,11 @@
 r"""Count heads per grid cell on the Kumbh evaluation frames: a faster ground truth than clicking every head.
 
     cd backend
-    ..\venv\Scripts\python.exe -m tools.count_eval
+    ..\venv\Scripts\python.exe -m tools.count_eval --annotator rohit
+
+Each person counts on their own: --annotator names the file, counts_<annotator>.csv, and the tool
+reads and writes only that file, so nobody sees another annotator's counts. The evaluation averages
+all complete files per frame and reports how far the annotators agree.
 
 Each usable frame (not marked unreadable) is shown with its counting region (COUNT_REGIONS in
 tools.make_kumbh_eval; otherwise the whole frame) split into a 3x3 grid. The cyan cell is zoomed in:
@@ -16,8 +20,10 @@ Keys:   0-9 = type the count     Backspace = delete a digit     Enter = save the
         n / p = next / previous frame                            s = mark the frame unreadable (then 1-5)
         r r = redraw the counting region (clears this frame's counts), then drag it
         q / Esc = quit
-Every Enter saves to data/eval/annotations/kumbh_eval/counts.csv: the region, each cell's count,
-the total and whether all nine cells are done. The tool reopens at the first frame not complete.
+Every Enter saves to data/eval/annotations/kumbh_eval/counts_<annotator>.csv: the region, each
+cell's count, the total and whether all nine cells are done. The tool reopens at the first frame
+that annotator has not completed. A frame marked unreadable (s) is skipped for everyone, since
+frames.csv is shared.
 """
 
 from __future__ import annotations
@@ -32,7 +38,7 @@ import numpy as np
 from app.config import DATA_DIR
 from app.image_io import read_image
 from ml.annotations import UNREADABLE, read_frame_status, set_frame_status
-from ml.kumbh_eval import CELLS, COUNTS_NAME, cell_rects, count_row, read_counts, write_counts
+from ml.kumbh_eval import CELLS, cell_rects, count_row, counts_path, read_counts, write_counts
 from tools.annotate_points import MAX_ZOOM, REASONS, ZOOM_STEP, View, enhance, roi_from_drag, wheel_delta
 from tools.make_kumbh_eval import COUNT_REGIONS
 
@@ -318,23 +324,27 @@ class CountTool:
 
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--annotator", required=True, help="your name in lowercase, e.g. rohit: your counts go to "
+                                                      "counts_<annotator>.csv")
     p.add_argument("--frames", type=Path, default=DATA_DIR / "eval" / "frames" / "kumbh_eval")
-    p.add_argument("--counts", type=Path, default=DATA_DIR / "eval" / "annotations" / "kumbh_eval" / COUNTS_NAME)
+    p.add_argument("--annotations", type=Path, default=DATA_DIR / "eval" / "annotations" / "kumbh_eval")
     p.add_argument("--window", default="1600x900", help="maximum window size, WxH")
     args = p.parse_args(argv)
+    try:
+        args.annotator = args.annotator.strip().lower()
+        path = counts_path(args.annotations, args.annotator)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
     print(__doc__)
-    points = sorted(f.name for f in args.counts.parent.glob("*.json")) if args.counts.parent.exists() else []
-    if points:
-        print(f"Note: point annotations exist for {', '.join(points)}. Once a frame is counted here, counts.csv "
-              "is used for it and its point file is ignored.\n")
+    print(f"Counting as {args.annotator} -> {path}\n(other annotators' counts are never shown)\n")
     win_w, win_h = (int(v) for v in args.window.lower().split("x"))
-    tool = CountTool(args.frames, args.counts, (win_w, win_h))
+    tool = CountTool(args.frames, path, (win_w, win_h))
     tool.run()
-    rows = read_counts(args.counts)
+    rows = read_counts(path)
     usable = {f.name for f in tool.usable()}
     complete = [r for name, r in rows.items() if r.get("complete") == "yes" and name in usable]
-    print(f"{len(complete)}/{len(usable)} usable frames counted, {sum(int(r['total']) for r in complete)} heads "
-          f"-> {args.counts}")
+    print(f"{args.annotator}: {len(complete)}/{len(usable)} usable frames counted, "
+          f"{sum(int(r['total']) for r in complete)} heads -> {path}")
 
 
 if __name__ == "__main__":
