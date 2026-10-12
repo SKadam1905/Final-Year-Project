@@ -224,6 +224,8 @@ def density_payload(zone: ZoneConfig, status: ZoneStatus, exits: list[dict], gri
         "count_method": status.count_method, "density_count": status.density_count,
         "detection_count": status.detection_count, "grid": grid, "hotspot": status.hotspot,
         "gate_actions": actions or [],
+        "speed": status.speed, "surge_ratio": status.surge_ratio, "surge_fired": status.surge_fired,
+        "escalation": status.escalation,
     }
 
 

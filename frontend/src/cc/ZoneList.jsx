@@ -1,9 +1,9 @@
 import { formatCount, formatNumber } from "../format.js";
-import { displayLevel, zoneState } from "../risk.js";
+import { SURGE_TONES, displayLevel, surgeStatus, surgeRuleText, zoneState } from "../risk.js";
 import { levelUi } from "./theme.js";
 
-/** Every camera zone as a compact, selectable row: level (word + icon), people, density, pressure. */
-export default function ZoneList({ zones, now, connected, selectedId, onSelect, title = "All cameras" }) {
+/** Every camera zone as a compact, selectable row: level (word + icon), people, density, pressure, speed surge. */
+export default function ZoneList({ zones, now, connected, selectedId, onSelect, title = "All cameras", surge }) {
   return (
     <section aria-labelledby="zone-list-heading" className="rounded-xl bg-navy-800 p-3">
       <h2 id="zone-list-heading" className="font-display text-sm font-semibold uppercase tracking-wider text-slate-300">{title}</h2>
@@ -16,6 +16,7 @@ export default function ZoneList({ zones, now, connected, selectedId, onSelect, 
             const ui = levelUi(level);
             const live = zoneState(zone, now, connected) === "live";
             const selected = zone.id === selectedId;
+            const speed = live ? surgeStatus(zone.reading, surge) : null;
             return (
               <li key={zone.id}>
                 <button type="button" onClick={() => onSelect(zone.id)} aria-pressed={selected}
@@ -31,6 +32,11 @@ export default function ZoneList({ zones, now, connected, selectedId, onSelect, 
                     <span className="block text-xs text-slate-400 tabular-nums">
                       {live ? `${formatCount(zone.reading.count)} people · ${formatNumber(zone.reading.density)} /m² · pressure ${formatNumber(zone.reading.pressure)}`
                         : level === "WAITING" ? "waiting for the first reading" : "no signal: values unknown"}
+                      {speed && (
+                        <span className={SURGE_TONES[speed.tone]} title={`Speed surge: ${speed.note}. ${surgeRuleText(surge)}`}>
+                          {" · surge "}{speed.text}{speed.tone === "fired" || speed.tone === "raised" ? " ⚡" : ""}
+                        </span>
+                      )}
                     </span>
                   </span>
                 </button>

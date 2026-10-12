@@ -1,5 +1,5 @@
 import { formatCount, formatNumber } from "../format.js";
-import { displayLevel, turbulenceLabel, zoneState } from "../risk.js";
+import { SURGE_TONES, displayLevel, surgeStatus, surgeRuleText, turbulenceLabel, zoneState } from "../risk.js";
 import { levelUi } from "./theme.js";
 
 function Figure({ label, value, unit }) {
@@ -11,8 +11,20 @@ function Figure({ label, value, unit }) {
   );
 }
 
+/** Speed-surge indicator: the ratio, what it means, and whether the trigger can raise the level. */
+function SurgeLine({ reading, surge }) {
+  const s = surgeStatus(reading, surge);
+  return (
+    <p className="mt-2 text-xs text-slate-400" title={surgeRuleText(surge)}>
+      <span className="font-semibold uppercase tracking-wider">Speed surge </span>
+      <span className={`tabular-nums ${SURGE_TONES[s.tone]}`}>{s.text}{s.tone === "fired" || s.tone === "raised" ? " ⚡" : ""}</span>
+      <span> · {s.note}{surge && !surge.trigger ? " · trigger off" : ""}</span>
+    </p>
+  );
+}
+
 /** The selected zone at a glance: level (word + icon + colour) and the four live figures. */
-export default function ZoneSummary({ zone, now, connected }) {
+export default function ZoneSummary({ zone, now, connected, surge }) {
   if (!zone) {
     return <section className="rounded-xl bg-navy-800 p-4 text-sm text-slate-400">Select a zone to see its details.</section>;
   }
@@ -44,6 +56,7 @@ export default function ZoneSummary({ zone, now, connected }) {
             <Figure label="Turbulence" value={formatNumber(r.turbulence)} unit={turbulenceLabel(r.turbulence)} />
             <Figure label="Crowd pressure" value={formatNumber(r.pressure)} unit="30 s mean" />
           </dl>
+          <SurgeLine reading={r} surge={surge} />
         </>
       ) : (
         <p className="mt-3 text-sm font-medium text-slate-300">

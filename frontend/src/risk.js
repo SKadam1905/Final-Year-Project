@@ -40,6 +40,35 @@ export function riskStyle(level) {
   return LEVELS[level] ?? WAITING;
 }
 
+/** Text colour per surge tone: never the only cue, the word in `note` says the same. */
+export const SURGE_TONES = {
+  idle: "text-slate-400", normal: "text-slate-300", rising: "text-yellow-200", fired: "text-orange-300", raised: "text-orange-200 font-bold",
+};
+
+/**
+ * The speed-surge indicator (backend app/surge.py): the zone's crowd speed over its median in the last
+ * few seconds. `surge` is /api/config's surge block (trigger on/off, ratio, consecutive readings).
+ */
+export function surgeStatus(reading, surge) {
+  const ratio = reading?.surge_ratio;
+  if (ratio == null) return { text: "—", tone: "idle", note: "no recent history yet" };
+  const threshold = surge?.ratio ?? 1.1;
+  const text = `${ratio.toFixed(2)}×`;
+  if (reading.escalation === "speed surge") return { text, tone: "raised", note: "speed surge: level raised" };
+  if (reading.surge_fired) {
+    return { text, tone: "fired", note: surge?.trigger ? "speed surge" : "speed surge (trigger off: level not raised)" };
+  }
+  if (ratio >= threshold) return { text, tone: "rising", note: `faster than usual (≥ ${threshold}×)` };
+  return { text, tone: "normal", note: "usual pace" };
+}
+
+/** One line on the trigger's setting, for tooltips and the details panel. */
+export function surgeRuleText(surge) {
+  if (!surge) return "";
+  const rule = `≥ ${surge.ratio}× for ${surge.consecutive} readings in a row`;
+  return surge.trigger ? `Trigger on: ${rule} raises a ${surge.min_level}+ zone to ORANGE.` : `Trigger off (would fire at ${rule}).`;
+}
+
 /** Same bands as backend/ml/optical_flow.py turbulence_to_label. */
 export function turbulenceLabel(score) {
   if (score >= 0.6) return "high";

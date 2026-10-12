@@ -128,6 +128,7 @@ export default function AlertFeed({ alerts, zoneNames, onAcknowledge }) {
                   </span>
                   <span className="font-semibold text-white">{zoneNames[alert.zone_id] ?? alert.zone_id}</span>
                   {isTest(alert) && <span className="rounded bg-violet-700 px-1 text-[10px] font-bold uppercase text-white">test video</span>}
+                  {alert.reason && <span className="rounded bg-orange-800 px-1 text-[10px] font-bold uppercase text-white">⚡ {alert.reason}</span>}
                   <time className="ml-auto text-xs tabular-nums text-slate-400">{formatTime(alert.timestamp * 1000)}</time>
                 </div>
                 {alert.hotspot && <p className="mt-1 text-xs text-slate-300"><span className="font-semibold text-saffron">Hotspot:</span> {hotspotText(alert.hotspot)}</p>}

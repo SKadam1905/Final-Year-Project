@@ -27,9 +27,10 @@ Video analysis (upload, jobs, video zones): see app/video_api.py. Reports (filte
 Socket.IO (path /socket.io; connect with auth {token}, refused without a valid one)
     density_update  {zone_id, name, timestamp, server_time, density, turbulence, pressure, raw_pressure,
                      risk_level, count, samples, exits, count_method ("density" | "detection"),
-                     density_count, detection_count, grid {rows, cols, counts, density, hotspot}, hotspot}
+                     density_count, detection_count, grid {rows, cols, counts, density, hotspot}, hotspot,
+                     speed, surge_ratio, surge_fired, escalation ("speed surge" when the surge trigger raised the level)}
     alert           {id, zone_id, risk_level, message, timestamp, incident_id, delivered, deliveries, hotspot,
-                     gate_actions, acknowledged_by, acknowledged_at}; "alert_ack" (same shape) once acknowledged
+                     gate_actions, reason, acknowledged_by, acknowledged_at}; "alert_ack" (same shape) once acknowledged
 New clients get the latest density_update of every zone as soon as they connect.
 
 Timestamps are Unix epoch seconds; `server_time` lets a client judge a reading's age without
@@ -307,6 +308,9 @@ def create_app(settings: Settings | None = None, services_factory=build_services
             "density_scale": heatmap_scale.to_dict(),
             "hybrid": {"threshold": settings.hybrid_threshold, "rule": settings.hybrid_rule},
             "grid": {"rows": settings.grid_rows, "cols": settings.grid_cols},
+            "surge": {"trigger": settings.surge_trigger, "ratio": settings.surge_ratio,
+                      "consecutive": settings.surge_consecutive, "history_s": settings.surge_history_s,
+                      "min_level": settings.surge_min_level},
         }
 
     @api.get("/api/zones")

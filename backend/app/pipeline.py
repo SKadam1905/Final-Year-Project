@@ -11,6 +11,11 @@ sparse, i.e. fewer than HYBRID_THRESHOLD people; otherwise CSRNet's. With HYBRID
 default) CSRNet must also count fewer than the threshold: YOLO misses people who are small or
 hidden (it finds almost none in an aerial view of a dense crowd), so its count alone cannot say a
 scene is sparse. HYBRID_RULE=detector lets YOLO's count decide alone.
+
+Speed surge (app.surge): every reading also gives the zone's surge ratio (its crowd speed over its
+recent median), shown on the dashboard. With SURGE_TRIGGER=1, while the surge rule fires a zone
+already at SURGE_MIN_LEVEL or above is reported as at least ORANGE, with escalation "speed surge";
+the smoothed pressure and the risk engine are left as they are.
 """
 
 from __future__ import annotations
@@ -24,7 +29,8 @@ import numpy as np
 from app.calibration import ZoneGeometry, ZoneGrid
 from app.config import Settings, ZoneConfig, get_settings
 from app.csrnet_model import DensityEstimator, DensityResult
-from app.risk_engine import RiskEngine, RiskThresholds, ZoneStatus
+from app.risk_engine import RiskEngine, RiskLevel, RiskThresholds, ZoneStatus
+from app.surge import SURGE_REASON, SurgeTracker
 from ml.optical_flow import FlowParams, TurbulenceParams, TurbulenceResult, burst_has_cut, burst_turbulence
 
 HYBRID_RULES = ("agree", "detector")
@@ -86,12 +92,20 @@ class ZoneAnalyzer:
         self.hybrid_threshold = s.hybrid_threshold
         self.hybrid_rule = s.hybrid_rule
         self.grid_shape = (s.grid_rows, s.grid_cols)
+        try:
+            self.surge_min_level = RiskLevel(s.surge_min_level.upper())
+        except ValueError:
+            raise ValueError(f"SURGE_MIN_LEVEL must be one of {[str(v) for v in RiskLevel]}, "
+                             f"not {s.surge_min_level!r}") from None
+        self.surge_trigger = s.surge_trigger
+        self.surge = SurgeTracker(s.surge_ratio, s.surge_consecutive, s.surge_history_s)
 
     def analyze(self, frames: Sequence[np.ndarray], timestamp: float) -> BurstAnalysis:
         """CSRNet (and YOLO) on the middle frame (frame 3 of 5), Farneback flow across the burst. A
         burst spanning a scene cut returns scene_cut=True and leaves the risk engine untouched."""
         started = time.perf_counter()
         if burst_has_cut(frames, self.flow_params):
+            self.surge.reset()  # speeds before the cut belong to another view
             return BurstAnalysis(None, None, None, 0.0, (time.perf_counter() - started) * 1e3, scene_cut=True)
         frame = frames[len(frames) // 2]
         density = self.estimator.predict(frame)
@@ -111,6 +125,10 @@ class ZoneAnalyzer:
                                       density.density if self.density_weighted else None)
         done = time.perf_counter()
         risk = self.engine.update(per_m2, turbulence.score, timestamp)
+        surge = self.surge.update(turbulence.mean_speed, timestamp)
+        level, escalation = risk["risk_level"], None
+        if self.surge_trigger and surge.fired and self.surge_min_level <= level < RiskLevel.ORANGE:
+            level, escalation = RiskLevel.ORANGE, SURGE_REASON
         status = ZoneStatus(
             zone_id=self.zone.id,
             timestamp=timestamp,
@@ -119,12 +137,16 @@ class ZoneAnalyzer:
             turbulence=turbulence.score,
             pressure=risk["raw_pressure"],
             smoothed_pressure=risk["smoothed_pressure"],
-            level=risk["risk_level"],
+            level=level,
             samples=risk["samples"],
             count_method=method,
             density_count=density_count,
             detection_count=detection_count,
             hotspot=grid.hotspot(),
+            speed=surge.speed,
+            surge_ratio=surge.ratio,
+            surge_fired=surge.fired,
+            escalation=escalation,
         )
         return BurstAnalysis(status, density, turbulence, (inferred - started) * 1e3, (done - detected) * 1e3,
                              detections=detections, grid=grid, detection_ms=(detected - inferred) * 1e3)

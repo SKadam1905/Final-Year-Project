@@ -1,6 +1,6 @@
 import { Suspense, lazy } from "react";
 import { countMethodLabel, formatCount, formatNumber, hotspotText, prettyNode } from "../format.js";
-import { turbulenceLabel, zoneState } from "../risk.js";
+import { SURGE_TONES, surgeStatus, surgeRuleText, turbulenceLabel, zoneState } from "../risk.js";
 
 const CrowdTrend = lazy(() => import("./CrowdTrend.jsx")); // carries the chart library
 
@@ -24,10 +24,11 @@ function Card({ id, title, children, aside }) {
 }
 
 /** Crowd estimation: the 10-minute trend, turbulence, which model counted, and the hotspot. */
-export function CrowdEstimation({ zone, now, connected, thresholds }) {
+export function CrowdEstimation({ zone, now, connected, thresholds, surge }) {
   if (!zone) return null;
   const live = zoneState(zone, now, connected) === "live";
   const r = zone.reading;
+  const speed = live ? surgeStatus(r, surge) : null;
   return (
     <Card id="estimation-heading" title="Crowd estimation">
       <Suspense fallback={<p className="h-44 text-sm text-slate-400" aria-busy="true">Loading the chart…</p>}>
@@ -42,6 +43,9 @@ export function CrowdEstimation({ zone, now, connected, thresholds }) {
             <span className="text-slate-300">{r.detection_count != null ? ` · YOLO found ${formatCount(r.detection_count)}, CSRNet counted ${formatCount(r.density_count)}` : ""}</span></dd>
           <dt className="text-slate-400">Hotspot</dt>
           <dd className="text-white">{r.hotspot ? hotspotText(r.hotspot) : "none (no one counted)"}</dd>
+          <dt className="text-slate-400">Speed surge</dt>
+          <dd className="text-white"><span className={SURGE_TONES[speed.tone]}>{speed.text}</span>
+            <span className="text-slate-300"> ({speed.note}: crowd speed vs its median over the last few seconds) {surgeRuleText(surge)}</span></dd>
         </dl>
       ) : <p className="mt-2 text-sm text-slate-400">No live reading: turbulence, counting method and hotspot are unknown.</p>}
     </Card>
