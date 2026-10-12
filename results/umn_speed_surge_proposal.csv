@@ -1,0 +1,10 @@
+method,decision,"threshold (all 3 scenes, Youden)"
+surge,live 30 s smoothing,1.046
+surge,each 2 s reading,1.199
+surge,2 readings in a row,1.098
+speed,live 30 s smoothing,0.816
+speed,each 2 s reading,0.950
+speed,2 readings in a row,0.871
+turbulence,live 30 s smoothing,0.158
+turbulence,each 2 s reading,0.165
+turbulence,2 readings in a row,0.152
