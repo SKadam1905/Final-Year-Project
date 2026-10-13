@@ -131,7 +131,7 @@ def alert_dict(alert_id: int | str | None, event: AlertEvent, incident_id: int |
         "id": alert_id, "zone_id": event.zone_id, "risk_level": str(event.level), "message": event.text,
         "timestamp": event.triggered_at, "incident_id": incident_id,
         "delivered": any(d["delivered"] for d in deliveries), "deliveries": deliveries,
-        "hotspot": event.hotspot, "gate_actions": list(event.actions),
+        "hotspot": event.hotspot, "gate_actions": list(event.actions), "reason": event.reason,
         "acknowledged_by": None, "acknowledged_at": None,
     }
 
@@ -143,7 +143,7 @@ def reading_dict(timestamp: float, status: ZoneStatus) -> dict:
         "density": status.density, "turbulence": status.turbulence, "count": status.count,
         "risk_level": str(status.level), "count_method": status.count_method,
         "density_count": status.density_count, "detection_count": status.detection_count,
-        "hotspot": status.hotspot,
+        "hotspot": status.hotspot, "surge_ratio": status.surge_ratio, "escalation": status.escalation,
     }
 
 
@@ -352,7 +352,7 @@ class MongoStore:
                "incident_id": self._object_id(incident.id) if incident else None,
                "risk_level": alert["risk_level"], "message": event.text, "triggered_at": to_datetime(event.triggered_at),
                "delivered": alert["delivered"], "deliveries": alert["deliveries"], "model_kind": self.model_kind,
-               "hotspot": alert["hotspot"], "gate_actions": alert["gate_actions"],
+               "hotspot": alert["hotspot"], "gate_actions": alert["gate_actions"], "reason": alert["reason"],
                "acknowledged_by": None, "acknowledged_at": None}
         self._submit(lambda: self.db.alerts.insert_one(doc))
         self._alert_cache[alert["id"]] = alert
@@ -410,7 +410,7 @@ class MongoStore:
                 "timestamp": _utc(d["triggered_at"]).timestamp(),
                 "incident_id": str(d["incident_id"]) if d.get("incident_id") else None,
                 "delivered": d["delivered"], "deliveries": d["deliveries"],
-                "hotspot": d.get("hotspot"), "gate_actions": d.get("gate_actions", []),
+                "hotspot": d.get("hotspot"), "gate_actions": d.get("gate_actions", []), "reason": d.get("reason"),
                 "acknowledged_by": d.get("acknowledged_by"),
                 "acknowledged_at": _utc(d["acknowledged_at"]).timestamp() if d.get("acknowledged_at") else None}
 

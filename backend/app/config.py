@@ -93,6 +93,13 @@ class Settings:
     users_config: Path = REPO_ROOT / "config" / "users.json"
     site_map: Path = REPO_ROOT / "config" / "site_map.json"  # schematic node positions for the map
     session_hours: float = 8.0
+    # Speed-surge trigger (app.surge; results/umn_speed_surge.md). Off by default: the ratio is still
+    # computed and shown, but nothing is escalated unless surge_trigger is on.
+    surge_trigger: bool = False
+    surge_ratio: float = 1.10  # speed / median speed of the previous surge_history_s seconds
+    surge_consecutive: int = 2  # readings in a row that must reach surge_ratio
+    surge_history_s: float = 10.0
+    surge_min_level: str = "YELLOW"  # density gate: only zones already at this level or above are escalated
 
 
 @lru_cache
@@ -137,6 +144,11 @@ def get_settings() -> Settings:
         users_config=repo_path(_env("USERS_CONFIG", "config/users.json")),
         session_hours=float(_env("SESSION_HOURS", "8")),
         site_map=repo_path(_env("SITE_MAP", "config/site_map.json")),
+        surge_trigger=_env_bool("SURGE_TRIGGER"),
+        surge_ratio=float(_env("SURGE_RATIO", "1.10")),
+        surge_consecutive=int(_env("SURGE_CONSECUTIVE", "2")),
+        surge_history_s=float(_env("SURGE_HISTORY_S", "10")),
+        surge_min_level=_env("SURGE_MIN_LEVEL", "YELLOW").upper(),
     )
 
 

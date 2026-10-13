@@ -175,6 +175,10 @@ class ZoneStatus:
     density_count: float | None = None  # CSRNet's count
     detection_count: int | None = None  # YOLO's count (None without a detector)
     hotspot: dict | None = None  # the most crowded grid cell: row, col, label, count, density
+    speed: float | None = None  # mean speed of moving pixels in the burst, full-resolution px/frame
+    surge_ratio: float | None = None  # speed / the zone's recent median (app.surge); None until it has history
+    surge_fired: bool = False  # the surge rule fires (shown even when SURGE_TRIGGER is off)
+    escalation: str | None = None  # why `level` is above the pressure's own level, e.g. "speed surge"
 
     def to_dict(self) -> dict:
         data = asdict(self)

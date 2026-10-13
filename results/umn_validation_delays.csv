@@ -1,0 +1,12 @@
+clip,scene,panic from (s into clip),delay s @ 0.165,delay s @ 0.3,delay s @ 0.6
+1,lawn,17.5,0.00 (on before),missed (on before),missed
+2,lawn,23.5,0.00 (on before),missed,missed
+3,indoor,11.8,0.00 (on before),1.77,missed
+4,indoor,20.1,0.00 (on before),missed,missed
+5,indoor,17.7,0.00 (on before),5.60,missed
+6,indoor,16.1,0.00 (on before),missed,missed
+7,indoor,25.8,0.00 (on before),0.00 (on before),missed
+8,indoor,16.4,0.00 (on before),missed,missed
+9,plaza,20.0,0.00 (on before),missed,missed
+10,plaza,21.0,0.03 (on before),missed,missed
+11,plaza,25.6,0.00 (on before),missed,missed

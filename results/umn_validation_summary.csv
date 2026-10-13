@@ -1,0 +1,4 @@
+threshold,panic frames flagged (TPR),normal frames flagged (FPR),clips detected,median delay (s),max delay (s),false alarms / min of normal walking,with 1 s guard
+"0.165 (best, Youden)",0.55,0.32,11 / 11,0.00,0.03,77.4,80.7
+0.3 (MEDIUM band),0.01,0.01,3 / 11,1.77,5.60,1.7,1.2
+0.6 (HIGH band),0.00,0.00,0 / 11,-,-,0.0,0.0

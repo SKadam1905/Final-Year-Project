@@ -1,0 +1,7 @@
+method,time-matched AUC (lawn / indoor / plaza),"time-matched AUC, mean","plain AUC, mean",TPR / FPR,clips detected,median delay (s),false alarms / min,thresholds (fitted on the other 2 scenes)
+turbulence,0.62 / 0.47 / 0.76,0.616,0.651,0.57 / 0.35,9 / 11,0.8,6.90,"lawn 0.171, indoor 0.155, plaza 0.165"
+speed,0.99 / 0.68 / 0.71,0.795,0.861,0.51 / 0.07,9 / 11,0.9,1.86,"lawn 0.95, indoor 1.15, plaza 0.95"
+surge,0.99 / 0.72 / 0.73,0.812,0.849,0.53 / 0.06,9 / 11,1.0,1.78,"lawn 1.2, indoor 1.43, plaza 1.2"
+"max(z) turbulence, surge",0.99 / 0.63 / 0.73,0.783,0.858,0.63 / 0.16,10 / 11,1.0,4.24,"lawn 0.81, indoor 1.01, plaza 1.05"
+logistic turbulence + surge,0.99 / 0.79 / 0.73,0.835,0.869,0.54 / 0.06,9 / 11,1.0,1.89,"lawn 0.502, indoor 0.196, plaza 0.489"
+time into clip (no motion; confound check),0.52 / 0.52 / 0.57,0.540,0.937,0.77 / 0.17,9 / 11,1.0,1.87,"lawn 16.2, indoor 17.6, plaza 16.2"

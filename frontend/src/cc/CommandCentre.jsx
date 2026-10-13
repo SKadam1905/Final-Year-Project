@@ -75,13 +75,15 @@ export default function CommandCentre({ live, selectedId, onSelect: setSelected 
             <GhatMap zones={zones} now={now} connected={connected} thresholds={backend.config?.thresholds}
               selectedId={selectedId} onSelect={onSelect} />
             <AlertFeed alerts={state.alerts} zoneNames={Object.fromEntries(zones.map((z) => [z.id, z.name]))} onAcknowledge={acknowledge} />
-            <ZoneList zones={zones} now={now} connected={connected} selectedId={selectedId} onSelect={onSelect} />
+            <ZoneList zones={zones} now={now} connected={connected} selectedId={selectedId} onSelect={onSelect}
+              surge={backend.config?.surge} />
           </div>
           <aside aria-label="Selected zone"
             className="min-w-0 space-y-3 lg:sticky lg:top-[4.5rem] lg:max-h-[calc(100vh-5rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
-            <ZoneSummary zone={selected} now={now} connected={connected} />
+            <ZoneSummary zone={selected} now={now} connected={connected} surge={backend.config?.surge} />
             <LiveMonitor key={selectedId} zone={selected} densityScale={backend.config?.density_scale} />
-            <CrowdEstimation zone={selected} now={now} connected={connected} thresholds={backend.config?.thresholds} />
+            <CrowdEstimation zone={selected} now={now} connected={connected} thresholds={backend.config?.thresholds}
+              surge={backend.config?.surge} />
             <SafestExit zone={selected} now={now} connected={connected} />
             <CameraStatus zone={selected} zones={zones} health={backend.health} />
           </aside>

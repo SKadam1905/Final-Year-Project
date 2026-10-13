@@ -1,7 +1,9 @@
 """Alert policy and delivery channels (plan Layer 3, §4.6).
 
 Policy: alert when a zone's smoothed level reaches ORANGE or RED, then stay quiet for that
-zone for the cooldown (10 min), except that an escalation (ORANGE -> RED) always fires.
+zone for the cooldown (10 min), except that an escalation (ORANGE -> RED) always fires. A level
+raised by the speed-surge trigger (status.escalation) goes through the same policy, and its reason
+is named in the message.
 A zone that simply stays RED is not re-alerted every 2 s; it gets a reminder once the
 cooldown has passed. Failed deliveries are reported in the alert (the dashboard shows them)
 rather than retried every reading, which would flood the dashboard while Telegram is down.
@@ -139,7 +141,10 @@ def format_alert(status: ZoneStatus, zone_name: str, route: Sequence[str] | None
     spot = status.hotspot
     hotspot = (f" Hotspot: {spot['label']} of the view (~{spot['count']:.0f} people, {spot['density']:.1f} ppl/m2)."
                if spot else "")
-    text = (f"{status.level}: {zone_name} - pressure {status.smoothed_pressure:.1f}, "
+    surge = (f" SPEED SURGE: people moving {status.surge_ratio:.1f}x faster than in the last few seconds."
+             if status.escalation and status.surge_ratio else
+             f" Escalated: {status.escalation}." if status.escalation else "")
+    text = (f"{status.level}: {zone_name} -{surge} pressure {status.smoothed_pressure:.1f}, "
             f"{status.density:.1f} ppl/m2, turbulence {status.turbulence:.2f}, ~{status.count:.0f} people, "
             f"{when}.{hotspot}{exit_via}")
     if actions:
@@ -157,6 +162,7 @@ class AlertEvent:
     route: tuple[str, ...] = ()
     hotspot: dict | None = None  # the zone's most crowded grid cell when the alert fired
     actions: tuple[str, ...] = ()  # the gate actions sent with it (app.gate_actions)
+    reason: str | None = None  # why the level was raised above the pressure's own, e.g. "speed surge"
 
 
 class AlertDispatcher:
@@ -176,4 +182,4 @@ class AlertDispatcher:
         deliveries = tuple(d for channel in self.channels for d in channel.send(text))
         self.policy.record(status.zone_id, status.level, status.timestamp)
         return AlertEvent(status.zone_id, status.level, text, status.timestamp, deliveries, tuple(route or ()),
-                          status.hotspot, tuple(actions or ()))
+                          status.hotspot, tuple(actions or ()), status.escalation)
