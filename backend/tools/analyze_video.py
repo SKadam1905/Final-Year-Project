@@ -103,7 +103,7 @@ def main(argv=None) -> None:
                 draw_banner(frame, [f"{s.level.name}  pressure {s.smoothed_pressure:.2f}",
                                     f"~{s.count:.0f} people  {s.density:.2f}/m2  turbulence {s.turbulence:.2f}"], s.level)
             if zone.roi:
-                draw_polygon(frame, zone.roi)
+                draw_polygon(frame, analyzer.geometry.roi_at((width, height)))
             writer.write(frame)
             index += 1
     cap.release()

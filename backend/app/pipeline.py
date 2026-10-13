@@ -114,14 +114,16 @@ class ZoneAnalyzer:
         detected = time.perf_counter()
 
         density_count, _ = self.geometry.measure(density.density, density.frame_size)
-        detection_count = int(self.geometry.in_zone(detections.feet).sum()) if detections is not None else None
+        detection_count = (int(self.geometry.in_zone(detections.feet, density.frame_size).sum())
+                           if detections is not None else None)
         method = choose_count(density_count, detection_count, self.hybrid_threshold, self.hybrid_rule)
         count = float(detection_count) if method == "detection" else density_count
         per_m2 = max(count, 0.0) / self.geometry.ground_area(density.frame_size, density.density.shape)
         grid = self.geometry.grid(density.density, density.frame_size, *self.grid_shape,
                                   points=detections.feet if method == "detection" else None)
 
-        turbulence = burst_turbulence(frames, self.zone.roi, self.flow_params, self.turbulence_params,
+        roi = self.geometry.roi_at(density.frame_size)  # in this frame's pixels
+        turbulence = burst_turbulence(frames, roi, self.flow_params, self.turbulence_params,
                                       density.density if self.density_weighted else None)
         done = time.perf_counter()
         risk = self.engine.update(per_m2, turbulence.score, timestamp)

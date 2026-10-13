@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -176,6 +176,8 @@ class Calibration:
 
     image_points: tuple[Point, ...]
     ground_points: tuple[Point, ...]
+    homography: tuple[tuple[float, float, float], ...] | None = None  # pixels -> metres; else from the markers
+    source: dict | None = field(default=None, compare=False, hash=False)  # how, by whom and when it was measured
 
 
 @dataclass(frozen=True)
@@ -186,10 +188,18 @@ class ZoneConfig:
     name: str
     source: str  # rtsp:// URL, or a video file path for offline testing
     roi: tuple[Point, ...] | None = None  # walkable-area polygon in camera pixels
-    area_m2: float | None = None  # ground area of the ROI when there is no calibration
+    area_m2: float | None = None  # ground area of the ROI: calibrated when there is a calibration, else estimated
     calibration: Calibration | None = None
     graph_node: str | None = None  # node in the exit-routing graph (default: the zone id)
     fixed_camera: bool = False  # true: never remove "camera motion" (a pole-mounted CCTV camera)
+    frame_size: tuple[int, int] | None = None  # (w, h) of the frame roi and calibration pixels refer to
+    area_m2_estimated: float | None = None  # the rough estimate used before calibration (comparison only)
+    roi_estimated: tuple[Point, ...] | None = None  # the ROI that estimate was for (None: the whole frame)
+
+    @property
+    def area_source(self) -> str:
+        """Where the persons/m² denominator comes from: 'calibrated' or 'estimated'."""
+        return "calibrated" if self.calibration is not None else "estimated"
 
 
 def _points(raw) -> tuple[Point, ...] | None:
@@ -198,25 +208,72 @@ def _points(raw) -> tuple[Point, ...] | None:
     return tuple((float(x), float(y)) for x, y in raw)
 
 
+def _calibration(zone_id: str, cal: dict, roi: tuple[Point, ...] | None, area_m2) -> tuple[Calibration, float | None]:
+    """The zone's calibration, checked against its stored homography and area; and the calibrated area
+    of the ROI (None without an ROI)."""
+    import numpy as np
+
+    from app.calibration import compute_homography, ground_area_m2, project
+
+    image_points, ground_points = _points(cal["image_points"]), _points(cal["ground_points"])
+    try:
+        H = compute_homography(image_points, ground_points)
+    except ValueError as exc:
+        raise ValueError(f"zone {zone_id!r}: calibration: {exc}") from None
+    stored = cal.get("homography")
+    if stored is not None:
+        Hs = np.asarray(stored, np.float64)
+        if Hs.shape != (3, 3) or not np.isfinite(Hs).all():
+            raise ValueError(f"zone {zone_id!r}: calibration.homography must be a 3x3 matrix of numbers")
+        a, b = project(Hs, np.asarray(image_points))[0], project(H, np.asarray(image_points))[0]
+        if not np.allclose(a, b, atol=0.01):  # 1 cm at the markers
+            raise ValueError(f"zone {zone_id!r}: calibration.homography does not match image_points/ground_points; "
+                             "re-run tools/calibrate_zone.py")
+        H = Hs
+    area = None
+    if roi is not None:
+        try:
+            area = ground_area_m2(H, roi)
+        except ValueError as exc:
+            raise ValueError(f"zone {zone_id!r}: roi: {exc}") from None
+        if area_m2 is not None and abs(float(area_m2) - area) > 0.01 * area:
+            raise ValueError(f"zone {zone_id!r}: area_m2 {area_m2} is not the calibrated area of the roi "
+                             f"({area:.1f} m²); re-run tools/calibrate_zone.py or correct it")
+    homography = tuple(tuple(float(v) for v in row) for row in H) if stored is not None else None
+    return Calibration(image_points, ground_points, homography, cal.get("source")), area
+
+
 def load_zones(path: str | Path) -> list[ZoneConfig]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     zones = []
     for raw in data["zones"]:
-        cal = raw.get("calibration")
+        zone_id = raw["id"]
         source = raw["source"]
         if "://" not in source:
             source = str(repo_path(source))
+        roi, area_m2 = _points(raw.get("roi")), raw.get("area_m2")
+        calibration = None
+        if raw.get("calibration"):
+            calibration, calibrated_area = _calibration(zone_id, raw["calibration"], roi, area_m2)
+            if area_m2 is None and calibrated_area is not None:
+                area_m2 = round(calibrated_area, 1)
+        frame_size = raw.get("frame_size")
+        if frame_size is not None:
+            if len(frame_size) != 2 or not all(isinstance(v, int) and v > 0 for v in frame_size):
+                raise ValueError(f"zone {zone_id!r}: frame_size must be [width, height] in pixels")
+            frame_size = (frame_size[0], frame_size[1])
         zone = ZoneConfig(
-            id=raw["id"],
-            name=raw.get("name", raw["id"]),
+            id=zone_id,
+            name=raw.get("name", zone_id),
             source=source,
-            roi=_points(raw.get("roi")),
-            area_m2=raw.get("area_m2"),
-            calibration=Calibration(_points(cal["image_points"]), _points(cal["ground_points"]))
-            if cal
-            else None,
+            roi=roi,
+            area_m2=area_m2,
+            calibration=calibration,
             graph_node=raw.get("graph_node"),
             fixed_camera=bool(raw.get("fixed_camera", False)),
+            frame_size=frame_size,
+            area_m2_estimated=raw.get("area_m2_estimated"),
+            roi_estimated=_points(raw.get("roi_estimated")),
         )
         if zone.area_m2 is None and zone.calibration is None:
             raise ValueError(

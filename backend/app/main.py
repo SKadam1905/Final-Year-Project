@@ -95,8 +95,11 @@ GRADCAM_WIDTH = 640  # Grad-CAM needs a backward pass: keep its input small
 
 
 def zone_info(zone: ZoneConfig, node: str | None) -> dict:
+    cal = zone.calibration
     return {"id": zone.id, "name": zone.name, "source": redact(zone.source), "graph_node": node,
-            "area_m2": zone.area_m2, "calibrated": zone.calibration is not None, "roi": zone.roi}
+            "area_m2": zone.area_m2, "area_source": zone.area_source, "area_m2_estimated": zone.area_m2_estimated,
+            "calibrated": cal is not None, "calibration_source": cal.source if cal else None, "roi": zone.roi,
+            "frame_size": zone.frame_size}
 
 
 def with_server_time(payload: dict) -> dict:

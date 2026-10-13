@@ -7,7 +7,8 @@
 //   GET /health                 { model_loaded, model_error, zones: [id], storage, frame_source,
 //                                 cameras: { id: {...} | null }, server_time }
 //   GET /api/config             { thresholds: { yellow, orange, red }, burst_interval_s, ... }
-//   GET /api/zones              [{ id, name, graph_node, area_m2, calibrated, source, roi }]
+//   GET /api/zones              [{ id, name, graph_node, area_m2, area_source ('calibrated' | 'estimated'),
+//                                 area_m2_estimated, calibrated, calibration_source, source, roi, frame_size }]
 //   GET /api/zones/:id/history  { zone_id, server_time, readings: [{ timestamp, pressure, ... }] }
 //   GET /api/zones/:id/snapshot.jpg | density.png | detections.png | gradcam.png   (503 + { detail } when unavailable)
 //   GET /api/alerts/recent      [{ id, zone_id, risk_level, message, timestamp, delivered, deliveries }]

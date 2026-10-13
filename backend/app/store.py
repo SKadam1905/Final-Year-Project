@@ -9,7 +9,8 @@ Alerts are returned as one event per alert, with its deliveries (one per channel
 recipient) nested inside: the same dict the worker emits as the Socket.IO "alert" event.
 
 MongoDB collections (database MONGODB_DB):
-    zones           _id = zone id; name, camera_source (credentials hidden), area_m2, graph_node
+    zones           _id = zone id; name, camera_source (credentials hidden), area_m2, area_source
+                    (calibrated | estimated), area_m2_estimated, calibrated, calibration_source, graph_node
     zone_readings   zone_id, ts, pressure (30 s mean), raw_pressure, density, turbulence, count, risk_level
 Readings, incidents and alerts also store `model_kind`, the kind of weights that made them
 (app.csrnet_model.describe_weights). Data made with demo or provenance-less weights is never
@@ -311,7 +312,9 @@ class MongoStore:
         for z in zones:
             self.db.zones.replace_one({"_id": z.id}, {
                 "name": z.name, "camera_source": redact(z.source), "area_m2": z.area_m2,
+                "area_source": z.area_source, "area_m2_estimated": z.area_m2_estimated,
                 "calibrated": z.calibration is not None, "graph_node": z.graph_node,
+                "calibration_source": z.calibration.source if z.calibration else None,
             }, upsert=True)
 
     def record_reading(self, status: ZoneStatus) -> None:

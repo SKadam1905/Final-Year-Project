@@ -5,8 +5,15 @@ from app.calibration import (
     ZoneGeometry,
     cell_ground_areas,
     compute_homography,
+    ground_area_m2,
+    ground_polygon,
+    is_convex,
+    is_simple_polygon,
     points_in_polygon,
+    polygon_area,
     project,
+    rectangle_ground_points,
+    rescale_homography,
     roi_mask,
 )
 
@@ -88,3 +95,54 @@ def test_zone_geometry_with_calibration():
 def test_zone_geometry_requires_area_or_homography():
     with pytest.raises(ValueError):
         ZoneGeometry()
+
+
+def test_rectangle_ground_points_go_round_from_a():
+    assert rectangle_ground_points(4, 10) == ((0, 0), (4, 0), (4, 10), (0, 10))
+    with pytest.raises(ValueError):
+        rectangle_ground_points(4, -1)
+
+
+def test_polygon_area_and_the_exact_ground_area_of_an_image_polygon():
+    assert polygon_area(SQUARE_M) == 1.0 and polygon_area(SQUARE_M[::-1]) == 1.0
+    assert polygon_area([(0, 0), (4, 0), (0, 3)]) == 6.0
+    H = compute_homography(TRAPEZOID_PX, TRAPEZOID_M)
+    assert ground_area_m2(H, TRAPEZOID_PX) == pytest.approx(40.0, rel=1e-9)  # exact, unlike the cell sums
+    near_half = [(200, 600), (600, 600), (700, 800), (100, 800)]  # image y 600-800 = ground y 0-~3.3 m
+    assert 0 < ground_area_m2(H, near_half) < 20
+    with pytest.raises(ValueError, match="horizon"):
+        ground_polygon(H, [(300, 400), (500, 400), (400, 100)])  # y = 100 px is above the horizon (200 px)
+
+
+def test_convex_and_simple_polygons():
+    a, b, c, d = TRAPEZOID_PX
+    assert is_convex([a, b, c, d]) and is_convex([d, c, b, a])
+    assert not is_convex([a, c, b, d])  # corners clicked across the diagonal
+    assert not is_convex([(0, 0), (1, 0), (2, 0), (1, 1)])  # three in a line
+    star = [(0, 10), (6, -8), (-9, 3), (9, 3), (-6, -8)]
+    assert not is_convex(star) and not is_simple_polygon(star)
+    assert is_simple_polygon([(0, 0), (4, 0), (4, 4), (2, 1), (0, 4)])  # concave is fine
+    assert not is_simple_polygon([a, c, b, d])
+    assert not is_simple_polygon([(0, 0), (1, 1)])
+    assert not is_simple_polygon([(0, 0), (4, 0), (0, 0), (0, 4)])  # a repeated vertex
+    assert not is_simple_polygon([(0, 0), (4, 0), (4, 4), (4, 2), (0, 4)])  # an edge doubling back on itself
+
+
+def test_rescaled_homography_maps_the_same_ground():
+    H = compute_homography(TRAPEZOID_PX, TRAPEZOID_M)  # for an 800 x 1000 frame
+    H2 = rescale_homography(H, (800, 1000), (400, 500))
+    np.testing.assert_allclose(project(H2, np.array(TRAPEZOID_PX) / 2)[0], TRAPEZOID_M, atol=1e-9)
+
+
+def test_zone_geometry_follows_the_frame_size():
+    H = compute_homography(TRAPEZOID_PX, TRAPEZOID_M)
+    geometry = ZoneGeometry(roi=TRAPEZOID_PX, homography=H, frame_size=(800, 1000))
+    assert geometry.ground_area((800, 1000), (250, 200)) == pytest.approx(40.0, rel=0.03)
+    assert geometry.ground_area((1600, 2000), (250, 200)) == pytest.approx(40.0, rel=0.03)  # 2x frames
+    assert geometry.roi_at((800, 1000)) is geometry.roi
+    assert geometry.roi_at((1600, 2000))[2] == (1400.0, 1600.0)
+    feet = np.array([[800.0, 1500.0]])  # mid-walkway in a 1600 x 2000 frame; outside the 800 x 1000 one
+    assert geometry.in_zone(feet, (1600, 2000)).all() and not geometry.in_zone(feet).any()
+    # Without a frame size (as before calibration recorded one) nothing is rescaled.
+    plain = ZoneGeometry(roi=TRAPEZOID_PX, homography=H)
+    assert plain.roi_at((1600, 2000)) is plain.roi

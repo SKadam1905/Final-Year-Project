@@ -101,6 +101,11 @@ uvicorn app.main:app --port 8000          # docs: http://localhost:8000/docs
 The demo clips (listed with their sources in `data\india_dataset\sources.csv`) are 2025
 Prayagraj Maha Kumbh news footage standing in for Nashik cameras; their `area_m2` values are
 rough visual estimates, so their densities and risk levels are illustrative only.
+To replace a zone's estimate with a measured area, calibrate it from its camera view: click a
+rectangle measured on the ground (Google Maps or a tape) and the zone's outline with
+`python -m tools.calibrate_zone` (guide: [results/CALIBRATION_GUIDE.md](results/CALIBRATION_GUIDE.md)).
+The live pipeline then divides by the calibrated area; `python -m tools.calibration_report`
+shows how much each zone's persons/m² and risk level change.
 
 Without `MONGODB_URI` (or if Atlas cannot be reached at start-up), readings, incidents and
 alerts are kept in memory; `/health` shows `"storage": "memory"` instead of `"mongodb"`.
@@ -593,7 +598,7 @@ On 2026-10-09 this moved the demo model's 17,737 readings (all counting 700.05 p
 | `frontend/src/components/VideoPage.jsx`, `VideoReport.jsx` | Video analysis page: upload form, jobs, report | Layer 4 |
 | `backend/ml/` | Density maps, dataset prep, training, evaluation | §5, §8 |
 | `backend/ml/gradcam.py` | Grad-CAM for CSRNet, hand-written (the pytorch-grad-cam package breaks the annotator's OpenCV) | Layer 4 |
-| `backend/tools/` | Frame extraction, annotator, CVAT import, alert test, offline video analysis | Phase 1 |
+| `backend/tools/` | Frame extraction, annotator, CVAT import, alert test, offline video analysis, zone calibration | Phase 1 |
 | `frontend/src/api.js`, `useLiveZones.js` | All network I/O: REST client, Socket.IO, image feed | Layer 4 |
 | `frontend/src/risk.js`, `liveState.js` | Risk colours/labels, sort order, 10 s stale rule; live-state reducer | Layer 4 |
 | `frontend/src/components/` | Presentational components: cards, detail view, chart, alerts | Layer 4 |
