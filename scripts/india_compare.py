@@ -1,11 +1,13 @@
 """India fine-tuning: compare the model before and after on the India test videos.
 
     venv\\Scripts\\python.exe scripts\\india_compare.py results\\india_before\\results.csv results\\india_after\\results.csv \\
-        --index data\\processed\\india\\index.csv --weights backend\\ml\\weights\\india_ft_best.pth
+        --index data\\processed\\india\\index.csv --split data\\india_dataset\\split.csv \\
+        --weights backend\\ml\\weights\\india_ft_best.pth
 
 Reads the per-image CSVs written by ml.evaluate for the same test split (scripts\\india_finetune.ps1
-runs both) and writes results\\india_finetune.csv/.md: MAE and RMSE before and after, overall and
-per test video. With --weights it also stores the after-numbers in that checkpoint's provenance.
+runs both) and writes results\\india_finetune.csv/.md: MAE and RMSE before and after, overall, per
+test location (with --split, the split.csv written by tools.india_dataset) and per test video. With
+--weights it also stores the after-numbers in that checkpoint's provenance.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ def main(argv=None) -> None:
     p.add_argument("before", type=Path)
     p.add_argument("after", type=Path)
     p.add_argument("--index", type=Path, help="the processed dataset's index.csv, for per-video numbers")
+    p.add_argument("--split", type=Path, help="data/india_dataset/split.csv (video -> location), for per-location numbers")
     p.add_argument("--weights", type=Path, help="fine-tuned checkpoint: store the test numbers in its provenance")
     p.add_argument("--out", type=Path, default=ROOT / "results" / "india_finetune")
     args = p.parse_args(argv)
@@ -48,7 +51,14 @@ def main(argv=None) -> None:
         with open(args.index, newline="") as f:
             for r in csv.DictReader(f):
                 video_of[r["id"]] = r["video"]  # ml.evaluate names each image by its index id
+    location_of = {}
+    if args.split:
+        with open(args.split, newline="", encoding="utf-8") as f:
+            location_of = {r["video"]: r["location"] for r in csv.DictReader(f)}
     groups = {"all test videos": sorted(before)}
+    for name in sorted(before):  # per location first, then per video
+        if location_of.get(video_of.get(name)):
+            groups.setdefault(f"location {location_of[video_of[name]]}", []).append(name)
     for name in sorted(before):
         if video_of.get(name):
             groups.setdefault(video_of[name], []).append(name)
@@ -63,6 +73,8 @@ def main(argv=None) -> None:
     write_table(args.out, rows, "India fine-tuning: counting error on the held-out India test videos", [
         "Before = the starting weights (Part A); after = fine-tuned on the India training videos. Same test images, "
         "evaluated once each; the test videos were never used for training or for choosing the epoch.",
+        "Test images are the annotated crops (up to 2 per frame, centred on the densest areas), not whole frames; "
+        "test locations are never seen in training.",
         "Plan target: 5-10% lower MAE after fine-tuning.",
     ])
     if args.weights:

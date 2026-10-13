@@ -15,6 +15,7 @@ import csv
 import json
 import os
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -78,14 +79,66 @@ def load_points_json(path: str | Path) -> PointAnnotation:
     )
 
 
-def parse_cvat_xml(path: str | Path, label: str | None = None) -> list[PointAnnotation]:
-    """Points shapes from a CVAT "CVAT for images 1.1" export (optionally one label only)."""
-    root = ET.parse(str(path)).getroot()
+def read_cvat_export(path: str | Path) -> bytes:
+    """annotations.xml of a CVAT export: the .xml itself, or the one inside the downloaded .zip."""
+    path = Path(path)
+    if not zipfile.is_zipfile(path):
+        return path.read_bytes()
+    with zipfile.ZipFile(path) as z:
+        names = [n for n in z.namelist() if PurePosixPath(n).name == "annotations.xml"]
+        if not names:
+            raise ValueError(f"{path} has no annotations.xml; export as 'CVAT for images 1.1'")
+        return z.read(min(names, key=len))
+
+
+def _cvat_images(source: str | Path | bytes) -> list[ET.Element]:
+    root = ET.fromstring(source) if isinstance(source, bytes) else ET.parse(str(source)).getroot()
     images = root.findall("image")
     if not images and root.find("track") is not None:
         raise ValueError("this is a 'CVAT for video' export; export the task as 'CVAT for images 1.1'")
+    return images
+
+
+def parse_cvat_tags(source: str | Path | bytes) -> dict[str, set[str]]:
+    """Image-level tags (e.g. "done", "bad_crop") of a CVAT for images 1.1 export, by image file name."""
+    return {PurePosixPath(i.get("name", "").replace("\\", "/")).name: {t.get("label", "") for t in i.findall("tag")}
+            for i in _cvat_images(source)}
+
+
+def write_cvat_xml(path: str | Path, images: list[tuple[str, int, int, np.ndarray]], labels: dict[str, str],
+                   point_label: str, task_name: str = "") -> None:
+    """A "CVAT for images 1.1" file with one single-point shape per head, for CVAT's Upload annotations.
+
+    `images` are (file name, width, height, points); ids follow sorted file names, CVAT's
+    default order. One shape per head lets an annotator delete or move each suggestion alone.
+    `labels` maps label name -> CVAT type ("points", "tag").
+    """
+    root = ET.Element("annotations")
+    ET.SubElement(root, "version").text = "1.1"
+    task = ET.SubElement(ET.SubElement(root, "meta"), "task")
+    ET.SubElement(task, "name").text = task_name
+    ET.SubElement(task, "size").text = str(len(images))
+    ET.SubElement(task, "mode").text = "annotation"
+    label_list = ET.SubElement(task, "labels")
+    for name, kind in labels.items():
+        label = ET.SubElement(label_list, "label")
+        ET.SubElement(label, "name").text = name
+        ET.SubElement(label, "type").text = kind
+        ET.SubElement(label, "attributes")
+    for index, (name, width, height, points) in enumerate(sorted(images, key=lambda i: i[0])):
+        image = ET.SubElement(root, "image", id=str(index), name=name, width=str(width), height=str(height))
+        for x, y in np.asarray(points, np.float64).reshape(-1, 2):
+            ET.SubElement(image, "points", label=point_label, source="auto", occluded="0",
+                          points=f"{x:.2f},{y:.2f}", z_order="0")
+    ET.indent(root, space=" ")
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    ET.ElementTree(root).write(str(path), encoding="utf-8", xml_declaration=True)
+
+
+def parse_cvat_xml(source: str | Path | bytes, label: str | None = None) -> list[PointAnnotation]:
+    """Points shapes from a CVAT "CVAT for images 1.1" export (optionally one label only)."""
     result = []
-    for image in images:
+    for image in _cvat_images(source):
         points = []
         for shape in image.findall("points"):
             if label is not None and shape.get("label") != label:

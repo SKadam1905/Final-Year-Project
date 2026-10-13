@@ -13,11 +13,18 @@ data/
 │   └── part_B_final/           # same layout
 ├── shanghaitech_download/      # the downloaded zip (can be deleted after extracting)
 ├── ucf_qnrf/                   # raw UCF-QNRF (Train/ and Test/ with img_0001.jpg + img_0001_ann.mat)
-├── india_dataset/
-│   ├── sources.csv             # one row per downloaded video: URL, title, channel, dates (cite these)
-│   ├── raw_videos/             # pandharpur_01.mp4, ... (H.264); MediaMTX serves each at rtsp://localhost:8554/<name>
-│   ├── frames/<video>/         # frame_0001.jpg ... (tools.extract_frames)
-│   └── annotations/<video>/    # frame_0001.json head points (tools.annotate_points / tools.cvat_to_points)
+├── india_dataset/              # python -m tools.india_dataset <step>; see results/INDIA_FINETUNE.md
+│   ├── sources.csv             # one row per video: video_file, location, event, year, source_url, camera_type
+│   ├── raw_videos/<location>/  # dataset videos (H.264); one folder per location
+│   ├── raw_videos/*.mp4        # demo clips (MediaMTX serves each at rtsp://localhost:8554/<name>); not in the dataset
+│   ├── frames/<video>/         # ~10 chosen frames, <video>_t0123.4s.jpg + frames.csv, candidates.csv, overlays.json
+│   ├── crops/<video>/          # dense crops + contact_sheet.jpg + rejected.txt (crops to leave out)
+│   ├── suggestions/<video>/    # suggested head points per crop (pre-annotation)
+│   ├── cvat/batch_<n>/         # one CVAT package per annotator (images.zip, preannotations.zip)
+│   ├── cvat_exports/           # the annotators' CVAT exports (batch_<n>.zip)
+│   ├── crop_annotations/<video>/  # imported, checked head points per crop
+│   └── split.csv               # train/val/test by video and location, fixed at the first import
+├── eval/                       # counting-accuracy evaluation frames + annotations (never trained on)
 ├── umn/                        # Crowd-Activity-All.avi + labels.csv (Phase 5, Part D)
 ├── test_clips/                 # synthetic_crowd_1280.mp4 (scripts/make_test_clip.py), untrained_csrnet.pth
 └── processed/<name>/           # output of ml.prepare_dataset: images/, density/, index.csv
@@ -61,5 +68,7 @@ data/
      numbers in the .avi; step through it in VLC or with `tools.extract_frames --fps 25`). If your
      copy comes with published per-frame labels, use those transition frames instead and cite them.
   3. Run `venv\Scripts\python.exe scripts\turbulence_roc.py` from the project root.
-- **India festival videos**: YouTube via `yt-dlp` (see the main README). Record every video
-  in `india_dataset/sources.csv` so the thesis can cite it.
+- **India festival videos**: YouTube via `yt-dlp` (see the main README and
+  `results/INDIA_FINETUNE.md`), saved as `india_dataset/raw_videos/<location>/<video>.mp4`. Record
+  every video in `india_dataset/sources.csv` so the thesis can cite it; check with
+  `python -m tools.india_dataset check` (from `backend/`).

@@ -1,115 +1,179 @@
 # Fine-tuning CSRNet on Indian festival footage
 
-The aim is to measure whether a few hundred annotated Indian frames lower the counting error on
-Indian crowds. The plan's target is a 5–10% lower MAE than the Part A model alone (Chapter 6).
-Everything below is ready to run; it waits only for annotated frames.
+The aim is to measure whether a few hundred annotated Indian crowd crops lower the counting error
+on Indian crowds, above all at places the model has never seen. The plan's target is an MAE 5–10%
+lower than the Part A model alone (Chapter 6). The pipeline below is built and tested; it now
+needs only videos and annotations.
 
 **Rules that keep the result honest**
 
-- Split by **video**, never by frame. Frames of one video are near-duplicates, so a video's
-  frames go entirely to train, validation or test. `ml.prepare_dataset` refuses a video
-  listed in both test and validation.
-- Choose the test videos **before** fine-tuning, and do not change them after seeing results.
+- Split by **video**, never by frame or crop. Frames of one video are near-duplicates, so each
+  video goes entirely to train, validation or test.
+- Hold out **whole locations** for test: at least 2 locations whose videos are never used in
+  training. This measures what matters for Nashik 2027, a model working at a place it has not
+  seen.
+- The split is chosen once, when the annotations are first imported, and saved in
+  `data\india_dataset\split.csv`. Do not move videos between splits after seeing test results.
 - The best epoch is chosen on the **validation** videos only.
-- Each model (before and after) is evaluated on the test videos **once**.
+- Each model (before and after) is evaluated on the test crops **once**:
   `scripts\india_finetune.ps1` does exactly that.
+
+All commands run from `backend\` with the project's virtual environment,
+`..\venv\Scripts\python.exe`. Everything under `data\` is git-ignored, because the frames show
+faces.
 
 ## 1. Collect videos
 
-1. Download clips of dense Indian crowds, ideally Kumbh, Pandharpur, Shirdi or Ganga ghats, from
-   a fixed or slowly moving camera. Use H.264, up to 720p:
+1. Download clips of dense Indian crowds: Kumbh, Pandharpur, Shirdi, Ganga ghats, temple queues.
+   Use H.264 at 720p or more; below 512 px on the short side, crops get smaller than 512 x 512.
 
    ```powershell
-   venv\Scripts\yt-dlp.exe -f "bv*[height<=720][vcodec^=avc1]" -o "data\india_dataset\raw_videos\pandharpur_01.%(ext)s" "<URL>"
+   venv\Scripts\yt-dlp.exe -f "bv*[height<=1080][vcodec^=avc1]" -o "data\india_dataset\raw_videos\nashik_ramkund\ramkund_01.%(ext)s" "<URL>"
    ```
-2. Record every clip in `data\india_dataset\sources.csv`: id, URL, title, channel, upload date
-   and download date. You will need these for the thesis citations.
-3. Aim for at least 6 videos: at least 2 for test, 1 for validation, and the rest for training.
-   Vary the places and viewing angles; a model tested on a scene it was trained on proves little.
+2. Put each video in a **location folder**: `data\india_dataset\raw_videos\<location>\<video>.mp4`.
+   Use only letters, digits, `_` and `-`. A video's id is its file name, so ids must be unique
+   across locations.
+3. Add one row per video to `data\india_dataset\sources.csv`:
 
-## 2. Extract frames
+   | column | example |
+   |---|---|
+   | video_file | `nashik_ramkund/ramkund_01.mp4` (path under raw_videos) |
+   | location | `nashik_ramkund` (the folder name) |
+   | event | `Simhastha Kumbh` |
+   | year | `2015` |
+   | source_url | the page you downloaded it from (cited in the thesis) |
+   | camera_type | `fixed`, `handheld` or `drone` |
 
-One frame every 5 seconds avoids near-duplicates within a video:
+   Optional columns are title, channel, upload_date, accessed_date, clip_start_s, clip_end_s
+   and notes.
+4. Aim for **at least 5 locations**: 2 for test, and the rest for training and validation.
+   Several videos per location help too.
 
-```powershell
-cd backend
-..\venv\Scripts\python.exe -m tools.extract_frames ..\data\india_dataset\raw_videos --fps 0.2
-```
+The three clips lying directly in `raw_videos\` (not in a folder) are the live demo's. They are
+also the source of the counting-accuracy evaluation frames, so they are never part of this
+dataset.
 
-Frames go to `data\india_dataset\frames\<video>\frame_0001.jpg`, and so on. Around 150–300 frames
-in total is a realistic amount to annotate. Delete frames that are blurred, show captions only,
-or show no crowd.
-
-## 3. Annotate heads in CVAT
-
-CVAT is free at https://app.cvat.ai (create an account; nothing to install).
-
-1. **Project:** Projects → + → name `kumbh-heads`. Add one label named `head`, type **Points**.
-2. **One task per video:** Tasks → + → name it exactly by the video id (e.g. `pandharpur_01`),
-   project `kumbh-heads`. Upload all frames of `data\india_dataset\frames\pandharpur_01\`.
-   Leave image quality at 100.
-3. **Annotate:** open the job. Choose the **Draw new points** tool (the point icon), label
-   `head`, then click once on the centre of every visible head. Press **N** to start and finish a
-   set of points, and **Ctrl+S** to save often.
-   - Include partly hidden heads and heads far away. Zoom in (mouse wheel) on distant areas.
-   - Exclude people on posters or screens, reflections in water, and statues.
-   - One click per head, at the head (not the body), the same way in every frame.
-   - A dense frame takes 10–20 minutes; use **Ctrl+Z** to undo a stray click.
-4. **Export:** Tasks → ⋮ → **Export task dataset** → format **CVAT for images 1.1** →
-   download and unzip. You get an `annotations.xml`.
-
-(Alternative without CVAT: the built-in click tool,
-`..\venv\Scripts\python.exe -m tools.annotate_points ..\data\india_dataset\frames\pandharpur_01`.)
-
-## 4. Import the annotations
-
-For each video's export, from `backend\`:
+## 2. Prepare the crops (about a minute per video on the laptop)
 
 ```powershell
-..\venv\Scripts\python.exe -m tools.cvat_to_points C:\path\to\annotations.xml --video pandharpur_01 --label head
+..\venv\Scripts\python.exe -m tools.india_dataset check
+..\venv\Scripts\python.exe -m tools.india_dataset frames
+..\venv\Scripts\python.exe -m tools.india_dataset crops
+..\venv\Scripts\python.exe -m tools.india_dataset preannotate
 ```
 
-This writes `data\india_dataset\annotations\pandharpur_01\frame_0001.json` (head points) for
-every annotated frame and prints `<n> frames, <m> heads`. It warns if a frame in the export is not
-under `data\india_dataset\frames\<video>\`, where the next step looks for it. Frames without an
-annotation file are left out of the dataset.
+1. **check** lists every video with its duration and resolution, and reports videos missing from
+   `sources.csv` and rows whose video is missing. It stops on errors (wrong camera type, location
+   not matching the folder, duplicate ids). Report: `results\india_intake.md`.
+2. **frames** picks about 10 frames per video that differ from each other. It skips frames near
+   scene cuts, blurred frames, title cards and blank frames, and frames with little crowd (the
+   density model counts each candidate). Frames that show the same people as an already chosen
+   frame are skipped too: matched image features on one homography. It also finds static logos
+   near the border, which the crops then avoid.
+   - Output: `data\india_dataset\frames\<video>\<video>_t0123.4s.jpg`, with the reason for every
+     skipped candidate in `candidates.csv`.
+   - Report: `results\india_frames.md`.
+3. **crops** cuts up to 2 non-overlapping 512 x 512 crops per frame, centred on the densest areas
+   the density model sees. Frames are first brought to the live system's resolution
+   (`INFER_MAX_WIDTH`). A second crop is cut only if it holds at least 30% of the first one's
+   predicted count.
+   - Output: `data\india_dataset\crops\<video>\`, with `contact_sheet.jpg`. **Look at every
+     contact sheet** and list bad crops (logos, captions, screens, blur, no crowd) in that
+     folder's `rejected.txt`.
+   - Report: `results\india_crops.md`.
+4. **preannotate** suggests head points for every crop. Every person the YOLO detector finds
+   gets a head point; the density map, cleared inside the detection boxes, gives points for the
+   rest (distant and hidden heads).
 
-## 5. Fine-tune and evaluate, in one command
+Steps 2–4 skip videos already done; add `--force` to redo one (`--video <id>`).
 
-From the project root, name the test and validation videos:
+## 3. Annotate in CVAT (the team)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\india_finetune.ps1 -TestVideos shirdi_01,ghat_03 -ValVideos pandharpur_02
+..\venv\Scripts\python.exe -m tools.india_dataset batches --annotators "Shubham Kadam,Rohit Kokare,Shraddha Deokar,Mitali Mishra"
 ```
 
-It runs, in order:
+This deals whole videos to the four annotators, balanced on crops and suggested heads, and writes
+one CVAT package per person in `data\india_dataset\cvat\batch_<n>\`. The list of who has which
+videos is in `results\india_batches.md`. Each person then follows
+**`results\ANNOTATION_GUIDE.md`**:
 
-1. `ml.prepare_dataset india`: density maps from the head points (geometry-adaptive Gaussians,
-   as for Part A) and the split by video, written to `data\processed\india\`.
-2. `ml.evaluate` with the starting weights (`CSRNET_WEIGHTS` in `.env`, or `-Init <file>`) on the
-   test videos, written to `results\india_before\`.
-3. `ml.train_csrnet --init <starting weights> --lr 1e-6 --epochs 60`: a low learning rate so the
-   Part A knowledge is adjusted, not overwritten. The best epoch is chosen on the validation
-   videos and saved to `backend\ml\weights\india_ft_best.pth`; the log goes to
-   `results\india_train_log.csv`.
-4. `ml.evaluate` with the fine-tuned weights on the same test videos, written to `results\india_after\`.
-5. `scripts\india_compare.py`: MAE and RMSE before and after, overall and per test video, written
-   to `results\india_finetune.csv` and `results\india_finetune.md`. It also stores the
-   after-numbers in the fine-tuned checkpoint's provenance. Check it with
-   `..\venv\Scripts\python.exe -m tools.inspect_weights ml\weights\india_ft_best.pth`.
+1. create a CVAT task;
+2. upload the suggestions once;
+3. correct the points;
+4. tag every crop `done` or `bad_crop`;
+5. export as *CVAT for images 1.1*.
 
-The training log prints the seconds per epoch and an estimated finish time as it runs.
+## 4. Import, check and build the dataset
+
+Put the four export zips in `data\india_dataset\cvat_exports\`, then:
+
+```powershell
+..\venv\Scripts\python.exe -m tools.india_dataset import
+```
+
+It runs these steps in order:
+
+1. Checks that every dealt crop came back tagged `done` or `bad_crop`. It stops while any crop
+   is unfinished; `--allow-incomplete` builds the dataset without those crops.
+2. Flags done crops that look like mistakes, in `results\india_import_check.md`:
+   - a corrected count far from the suggestion compared with the rest of that video;
+   - every suggestion deleted, or every suggestion kept unchanged;
+   - double clicks, or points outside the image.
+3. Writes the head points to `data\india_dataset\crop_annotations\`.
+4. Chooses the split by location, saved in `data\india_dataset\split.csv` and
+   `results\india_split.md`: about 15% of the crops for test, from at least 2 locations never
+   used in training, and about 15% for validation from whole videos.
+5. Builds the density maps (geometry-adaptive Gaussians, as for Part A) in
+   `data\processed\india\`.
+
+When locations differ a lot in size, the test share can land far from 15%; `results\india_split.md`
+shows the real shares. To name the test and validation videos yourself, add
+`--test-videos a,b --val-videos c` (only before any result has been seen).
+
+## 5. Fine-tune and evaluate overnight, in one command
+
+From the project root, with Chrome and other heavy programs closed:
+
+```powershell
+Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File scripts\india_finetune.ps1" -WindowStyle Minimized
+```
+
+Follow it with `Get-Content results\india_finetune_run.log -Wait -Tail 20`. It runs these steps
+in order:
+
+1. `tools.india_dataset build`: rebuilds `data\processed\india\` with the saved split.
+2. `ml.evaluate` with the starting weights (`CSRNET_WEIGHTS` in `.env`, or `-Init <file>`) on
+   the test crops, written to `results\india_before\`.
+3. `ml.train_csrnet --init <starting weights> --lr 1e-6 --epochs 100 --early-stop 20`, with
+   1 data worker and no pinned memory (this laptop's RAM). The low learning rate adjusts the Part
+   A knowledge rather than overwriting it.
+   - The best epoch is chosen on the validation videos and saved to
+     `backend\ml\weights\india_ft_best.pth`.
+   - The log goes to `results\india_train_log.csv`.
+4. `ml.evaluate` with the fine-tuned weights on the same test crops, written to
+   `results\india_after\`.
+5. `scripts\india_compare.py`: MAE and RMSE before and after, for all test crops, **per test
+   location** and per test video.
+   - Written to `results\india_finetune.csv` and `results\india_finetune.md`.
+   - It also stores the after-numbers in the fine-tuned checkpoint's provenance; check them with
+     `..\venv\Scripts\python.exe -m tools.inspect_weights ml\weights\india_ft_best.pth`.
+
+The test error is measured on test **crops**: the densest parts of frames, at the live system's
+resolution. It is not measured on whole frames, so say so in the thesis.
 
 ## 6. Use the result
 
-If the fine-tuned model has a lower test MAE on the India videos, set
+If the fine-tuned model has a lower test MAE on the India test locations, set
 `CSRNET_WEIGHTS=backend/ml/weights/india_ft_best.pth` in `.env` and restart the backend. The
-dashboard footer and `/health` then name these weights. Report both rows of
-`results\india_finetune.md` in Chapter 6, whichever is better, together with the number of
-annotated frames and heads.
+dashboard footer and `/health` then name these weights. Report all rows of
+`results\india_finetune.md` in Chapter 6, whichever model is better, together with:
+
+- the numbers of locations, videos, crops and annotated heads;
+- that the test locations were never used in training.
 
 ## Ethics
 
-The frames show identifiable faces. Keep `data\` out of git (it already is), do not publish raw
-frames, publish only density maps or head coordinates, and cite every source video from
-`sources.csv`.
+The frames show identifiable faces. Keep `data\` out of git (it already is). Do not publish raw
+frames or crops; publish only density maps, head coordinates or blurred examples. Cite every
+source video from `sources.csv`.
