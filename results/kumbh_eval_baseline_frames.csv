@@ -1,0 +1,15 @@
+frame,shot_type,"region (x0,y0,x1,y1)",true (annotators' mean),CSRNet,CSRNet err %,YOLO,YOLO err %,hybrid,hybrid err %,hybrid uses
+frame_01.png,aerial,"100,0,205,360",51,3.1,93.9,0.0,100.0,3.1,93.9,CSRNet
+frame_02.png,aerial,"0,0,250,85",57,5.9,89.6,0.0,100.0,5.9,89.6,CSRNet
+frame_04.png,aerial,"300,120,410,360",46.5,7.5,83.8,0.0,100.0,7.5,83.8,CSRNet
+frame_05.png,wide,"0,230,640,360",48,40.3,16.0,11.0,77.1,40.3,16.0,CSRNet
+frame_06.png,wide,"0,200,640,360",45.5,50.7,11.4,4.0,91.2,50.7,11.4,CSRNet
+frame_07.png,wide,"0,230,640,360",45.5,53.6,17.9,6.0,86.8,53.6,17.9,CSRNet
+frame_08.png,medium,"0,185,640,360",35,48.4,38.2,13.0,62.9,48.4,38.2,CSRNet
+frame_09.png,medium,"280,140,640,360",16.5,9.1,44.7,12.0,27.3,12.0,27.3,YOLO
+frame_10.png,medium,"0,0,640,360",17.5,18.4,4.9,17.0,2.9,17.0,2.9,YOLO
+frame_11.png,medium,"0,0,640,360",14,9.7,30.8,13.0,7.1,13.0,7.1,YOLO
+frame_12.png,close,"0,0,640,360",22,50.7,130.6,12.0,45.5,12.0,45.5,YOLO
+frame_13.png,close,"0,0,640,360",13,35.9,175.9,13.0,0.0,13.0,0.0,YOLO
+frame_14.png,close,"0,0,640,360",8,11.0,37.8,10.0,25.0,10.0,25.0,YOLO
+frame_15.png,close,"0,0,640,360",5,6.8,36.1,3.0,40.0,3.0,40.0,YOLO
